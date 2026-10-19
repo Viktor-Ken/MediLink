@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
-import { randomBytes } from 'node:crypto';
+import { createSecretKey, randomBytes } from 'node:crypto';
 
 dotenv.config();
 
@@ -19,6 +19,11 @@ if (!process.env.JWT_SECRET) {
     '[medilink] WARNING: JWT_SECRET not set — generated a random secret for this boot. ' +
     'Set JWT_SECRET in server/.env to keep sessions valid across restarts.');
 }
+
+// Pre-built symmetric KeyObject: jsonwebtoken's verify() otherwise calls
+// createPublicKey(secret) (which throws) then createSecretKey() on EVERY
+// request — measured at ~13% of server CPU under load. Same HMAC key material.
+const JWT_SECRET_KEY = createSecretKey(Buffer.from(JWT_SECRET, 'utf8'));
 
 export function signToken(staff) {
   return jwt.sign(
@@ -43,7 +48,7 @@ export function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Authentication required' });
   }
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, JWT_SECRET_KEY);
     if (payload.role === 'patient') {
       return res.status(401).json({ error: 'Staff access only' });
     }
@@ -61,7 +66,7 @@ export function requirePatient(req, res, next) {
     return res.status(401).json({ error: 'Authentication required' });
   }
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, JWT_SECRET_KEY);
     if (!payload.pid) {
       return res.status(401).json({ error: 'Patient access only' });
     }

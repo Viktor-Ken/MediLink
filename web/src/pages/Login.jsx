@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext.jsx';
 import PasswordInput from '../components/PasswordInput.jsx';
 import ThemeToggle from '../components/ThemeToggle.jsx';
+import { clerkEnabled } from '../clerk.js';
 
 export default function Login() {
   const { login } = useAuth();
@@ -60,6 +61,9 @@ export default function Login() {
           <button className="btn btn-block" disabled={busy}>
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
+          {clerkEnabled && (
+            <Link className="btn btn-ghost btn-block" to="/sso">Sign in with single sign-on</Link>
+          )}
         </div>
         <div className="login-hint">
           Demo accounts — <strong>admin / admin123</strong> (admin),
@@ -75,6 +79,11 @@ export default function Login() {
         <Link className="btn btn-ghost btn-block" style={{ marginTop: 14 }} to="/portal/login">
           Patient self-service portal →
         </Link>
+        <p className="legal-links">
+          <Link to="/privacy">Privacy Policy</Link>
+          <span aria-hidden="true"> · </span>
+          <Link to="/terms">Terms of Service</Link>
+        </p>
       </form>
     </div>
   );

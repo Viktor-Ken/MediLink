@@ -26,6 +26,7 @@ import reportRoutes from './routes/reports.js';
 import staffRoutes from './routes/staff.js';
 import vitalRoutes from './routes/vitals.js';
 import accountRoutes from './routes/account.js';
+import chatRoutes from './routes/chat.js';
 import { evaluateLicense, warnLicense } from './license.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -44,15 +45,30 @@ export function createApp() {
   app.use(compression());
   app.use(express.json({ limit: '256kb' }));
 
+  // Clerk (optional SSO) needs its own origins in the policy. When Clerk is not
+  // configured the policy stays as strict as before.
+  const clerkOn = Boolean(process.env.CLERK_PUBLISHABLE_KEY || process.env.CLERK_ISSUER);
+  const clerkSrc = clerkOn ? ' https://*.clerk.accounts.dev https://*.clerk.com' : '';
+  const csp = [
+    "default-src 'self'",
+    clerkOn ? `script-src 'self' https://challenges.cloudflare.com${clerkSrc}` : "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    `img-src 'self' data: blob:${clerkSrc}`,
+    "font-src 'self' data:",
+    `connect-src 'self' ws: wss:${clerkSrc}`,
+    clerkOn ? `frame-src 'self' https://challenges.cloudflare.com${clerkSrc}` : "frame-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "worker-src 'self' blob:",
+  ].join('; ');
+
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
-    res.setHeader('Content-Security-Policy',
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-      "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; " +
-      "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; worker-src 'self' blob:");
+    res.setHeader('Content-Security-Policy', csp);
     if (process.env.NODE_ENV === 'production') {
       res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
     }
@@ -98,6 +114,7 @@ export function createApp() {
   app.use('/api/staff',         staffRoutes);
   app.use('/api/vitals',        vitalRoutes);
   app.use('/api/account',       accountRoutes);
+  app.use('/api/chat',          chatRoutes);
 
   const dist = resolve(__dirname, '../../web/dist');
   if (existsSync(dist)) {

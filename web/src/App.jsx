@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
 import { AuthProvider, useAuth } from './AuthContext.jsx';
 import Layout from './components/Layout.jsx';
 import LicenseLocked from './components/LicenseLocked.jsx';
@@ -25,6 +26,11 @@ import PortalMessages from './pages/portal/PortalMessages.jsx';
 import PortalAccount from './pages/portal/PortalAccount.jsx';
 import Account from './pages/Account.jsx';
 import StaffAdmin from './pages/StaffAdmin.jsx';
+import Privacy from './pages/Privacy.jsx';
+import Terms from './pages/Terms.jsx';
+
+// Clerk lives in its own chunk and is only fetched when SSO is used.
+const Sso = lazy(() => import('./pages/Sso.jsx'));
 
 function Protected() {
   const { user, loading } = useAuth();
@@ -52,6 +58,12 @@ export default function App() {
         <LicenseLocked />
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route
+            path="/sso"
+            element={<Suspense fallback={<div className="center-screen">Loading…</div>}><Sso /></Suspense>}
+          />
+          <Route path="/privacy" element={<Privacy />} />
+          <Route path="/terms" element={<Terms />} />
           <Route path="/portal/login" element={<PortalLogin />} />
           <Route path="/portal" element={<PortalLayout />}>
             <Route index element={<Navigate to="/portal/record" replace />} />

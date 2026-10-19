@@ -10,7 +10,8 @@ router.use(requireRole('admin'));
 const ROLES = ['admin', 'doctor', 'nurse', 'receptionist', 'pharmacist', 'optometrist', 'lab_scientist'];
 
 const LIST_SQL = `
-  SELECT s.id, s.username, s.full_name, s.role, s.active, s.created_at,
+  SELECT s.id, s.username, s.full_name, s.role, s.active, s.created_at, s.email,
+         (s.clerk_user_id IS NOT NULL) AS sso_linked,
          d.name AS department_name, d.code AS department_code
   FROM staff s
   LEFT JOIN departments d ON d.id = s.department_id
@@ -49,14 +50,24 @@ router.post('/', async (req, res, next) => {
       if (!depts[0]) return res.status(400).json({ error: 'Unknown department_id' });
     }
 
+    // Optional email — used to link a Clerk single-sign-on identity to this account.
+    let email = null;
+    if (b.email !== undefined && b.email !== null && String(b.email).trim() !== '') {
+      email = String(b.email).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ error: 'email is not valid' });
+      }
+    }
+
     const passwordHash = await hashPassword(password, 10);
     const { rows } = await pool.query(
-      `INSERT INTO staff (username, password_hash, full_name, role, department_id)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO staff (username, password_hash, full_name, role, department_id, email)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (username) DO UPDATE SET active = TRUE, password_hash = EXCLUDED.password_hash,
-         full_name = EXCLUDED.full_name, role = EXCLUDED.role, department_id = EXCLUDED.department_id
-       RETURNING id, username, full_name, role, department_id, active`,
-      [username, passwordHash, fullName, role, b.department_id || null],
+         full_name = EXCLUDED.full_name, role = EXCLUDED.role, department_id = EXCLUDED.department_id,
+         email = COALESCE(EXCLUDED.email, staff.email)
+       RETURNING id, username, full_name, role, department_id, active, email`,
+      [username, passwordHash, fullName, role, b.department_id || null, email],
     );
     res.status(201).json({ staff: rows[0] });
   } catch (err) {

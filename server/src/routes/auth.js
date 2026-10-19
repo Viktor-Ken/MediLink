@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { compare } from '@node-rs/bcrypt';
 import pool from '../db.js';
 import { requireAuth, requirePatient, signPatientToken, signToken } from '../auth.js';
+import { clerkConfigured, verifyClerkSession } from '../clerk.js';
 
 const router = Router();
 
@@ -45,6 +46,65 @@ router.post('/login', authRateLimit, async (req, res, next) => {
     }
 
     const { password_hash, ...safe } = staff;
+    res.json({ token: signToken(staff), staff: safe });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Single sign-on: exchange a verified Clerk session token for a MediLink JWT.
+// Clerk is optional — when the server has no Clerk configuration this route
+// reports 503 and the normal username/password login is unaffected.
+router.post('/clerk', authRateLimit, async (req, res, next) => {
+  try {
+    if (!clerkConfigured()) {
+      return res.status(503).json({ error: 'Single sign-on is not configured on this server' });
+    }
+    const header = req.headers.authorization || '';
+    const clerkToken = header.startsWith('Bearer ') ? header.slice(7) : '';
+    if (!clerkToken) {
+      return res.status(401).json({ error: 'Missing Clerk session token' });
+    }
+
+    let claims;
+    try {
+      claims = await verifyClerkSession(clerkToken);
+    } catch {
+      return res.status(401).json({ error: 'Invalid Clerk session' });
+    }
+
+    const clerkUserId = String(claims.sub || '');
+    if (!clerkUserId) return res.status(401).json({ error: 'Invalid Clerk session' });
+
+    // Prefer a stable link (clerk_user_id); otherwise match on verified email.
+    const COLS = 'id, username, password_hash, full_name, role, department_id, active, email, clerk_user_id';
+    let { rows } = await pool.query(`SELECT ${COLS} FROM staff WHERE clerk_user_id = $1`, [clerkUserId]);
+    let staff = rows[0];
+
+    if (!staff) {
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      if (email) {
+        ({ rows } = await pool.query(
+          `SELECT ${COLS} FROM staff WHERE lower(email) = $1 AND clerk_user_id IS NULL`,
+          [email],
+        ));
+        staff = rows[0];
+        if (staff) {
+          await pool.query('UPDATE staff SET clerk_user_id = $1 WHERE id = $2', [clerkUserId, staff.id]);
+        }
+      }
+    }
+
+    if (!staff) {
+      return res.status(403).json({
+        error: 'No MediLink account is linked to this sign-in. Ask an administrator to add your email to your staff record.',
+      });
+    }
+    if (staff.active === false) {
+      return res.status(401).json({ error: 'This account has been deactivated' });
+    }
+
+    const { password_hash, clerk_user_id, ...safe } = staff;
     res.json({ token: signToken(staff), staff: safe });
   } catch (err) {
     next(err);
