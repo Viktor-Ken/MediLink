@@ -1,10 +1,12 @@
 import { Router } from 'express';
+import { randomInt } from 'node:crypto';
 import { hash as hashPassword } from '@node-rs/bcrypt';
 import pool, { PATIENT_COLUMNS } from '../db.js';
 import { requireAuth, requireRole } from '../auth.js';
 import { emitEvent } from '../events.js';
 import { evaluateLicense } from '../license.js';
 import { caches, invalidate } from '../cache.js';
+import { escapeLike } from '../util.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -29,14 +31,14 @@ export function toList(value) {
 
 router.get('/', async (req, res, next) => {
   try {
-    const q = (req.query.q || '').trim();
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     if (!q) {
       const { rows } = await pool.query(
         `SELECT ${PATIENT_COLUMNS} FROM patients ORDER BY created_at DESC LIMIT 100`,
       );
       return res.json({ patients: rows });
     }
-    const like = `%${q}%`;
+    const like = `%${escapeLike(q.slice(0, 100))}%`;
     const { rows } = await pool.query(
       `SELECT ${PATIENT_COLUMNS} FROM patients
        WHERE patient_no ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1
@@ -59,7 +61,17 @@ router.post('/', requireRole('admin'), async (req, res, next) => {
       return res.status(400).json({ error: 'first_name and last_name are required' });
     }
 
-    const portalPin = (b.pin || '1234').toString();
+    // Never fall back to a guessable PIN: patient numbers are sequential, so a
+    // shared default would expose every portal account.
+    let portalPin;
+    if (b.pin === undefined || b.pin === null || b.pin === '') {
+      portalPin = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    } else {
+      portalPin = String(b.pin);
+      if (!/^\d{4,8}$/.test(portalPin)) {
+        return res.status(400).json({ error: 'PIN must be 4–8 digits' });
+      }
+    }
     const pinHash = await hashPassword(portalPin, 10);
 
     const { rows } = await pool.query(

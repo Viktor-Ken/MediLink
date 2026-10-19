@@ -2,11 +2,20 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { requireAuth } from '../auth.js';
 import { emitEvent } from '../events.js';
+import { cleanText, isUuid, parseDate } from '../util.js';
 
 const router = Router();
 router.use(requireAuth);
 
 const TRANSITIONS = { check_in: 'checked_in', complete: 'completed', cancel: 'cancelled', no_show: 'no_show' };
+
+// Which current statuses each status may be reached from.
+const FROM = {
+  checked_in: ['scheduled'],
+  completed: ['scheduled', 'checked_in'],
+  cancelled: ['scheduled', 'checked_in'],
+  no_show: ['scheduled'],
+};
 
 router.get('/', async (req, res, next) => {
   try {
@@ -17,7 +26,7 @@ router.get('/', async (req, res, next) => {
     const params = [];
     if (patientId) {
       params.push(patientId);
-      clauses.push(`p.id::text = $${params.length} OR p.patient_no = $${params.length}`);
+      clauses.push(`(p.id::text = $${params.length} OR p.patient_no = $${params.length})`);
     }
     if (mine === '1' && !patientId) {
       params.push(myDept, me);
@@ -47,10 +56,19 @@ router.get('/', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const b = req.body || {};
-    const { patientId, departmentId, staffId, scheduledFor, durationMin = 30, reason } = b;
+    const { patientId, departmentId, staffId, scheduledFor, durationMin = 30 } = b;
+    const reason = cleanText(b.reason, 500) || undefined;
     if (!patientId || !scheduledFor) {
       return res.status(400).json({ error: 'patientId and scheduledFor are required' });
     }
+    const when = parseDate(scheduledFor);
+    if (!when) return res.status(400).json({ error: 'scheduledFor is not a valid date' });
+    const duration = Number(durationMin);
+    if (!Number.isInteger(duration) || duration < 5 || duration > 480) {
+      return res.status(400).json({ error: 'durationMin must be between 5 and 480' });
+    }
+    if (departmentId && !isUuid(departmentId)) return res.status(400).json({ error: 'Valid department required' });
+    if (staffId && !isUuid(staffId)) return res.status(400).json({ error: 'Unknown staff member' });
     const { rows: patients } = await pool.query(
       'SELECT id, patient_no, first_name, last_name FROM patients WHERE id::text = $1 OR patient_no = $1',
       [patientId],
@@ -69,7 +87,7 @@ router.post('/', async (req, res, next) => {
       `INSERT INTO appointments (patient_id, department_id, staff_id, scheduled_for, duration_min, reason, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, scheduled_for, status`,
-      [patient.id, dept.id, staffId || null, scheduledFor, durationMin, reason || null, req.staff.id],
+      [patient.id, dept.id, staffId || null, when, duration, reason || null, req.staff.id],
     );
     const appointment = rows[0];
 
@@ -90,11 +108,18 @@ router.post('/', async (req, res, next) => {
 Object.entries(TRANSITIONS).forEach(([action, status]) => {
   router.post(`/:id/${action}`, async (req, res, next) => {
     try {
+      if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Appointment not found' });
       const { rows } = await pool.query(
-        `UPDATE appointments SET status = $1 WHERE id = $2 RETURNING id, status, patient_id, department_id`,
-        [status, req.params.id],
+        `UPDATE appointments SET status = $1
+         WHERE id = $2 AND status = ANY($3)
+         RETURNING id, status, patient_id, department_id`,
+        [status, req.params.id, FROM[status]],
       );
-      if (!rows[0]) return res.status(404).json({ error: 'Appointment not found' });
+      if (!rows[0]) {
+        const { rows: exists } = await pool.query('SELECT status FROM appointments WHERE id = $1', [req.params.id]);
+        if (!exists[0]) return res.status(404).json({ error: 'Appointment not found' });
+        return res.status(409).json({ error: `Appointment is ${exists[0].status}; it cannot be ${status}` });
+      }
       const appt = rows[0];
 
       if (status === 'checked_in') {
@@ -107,7 +132,7 @@ Object.entries(TRANSITIONS).forEach(([action, status]) => {
       if (status === 'completed') {
         await pool.query(
           `UPDATE visits SET status = 'closed', ended_at = now()
-           WHERE patient_id = $1 AND status = 'active'`,
+           WHERE patient_id = $1 AND status = 'active' AND visit_type = 'outpatient'`,
           [appt.patient_id],
         );
       }

@@ -353,7 +353,7 @@ export default function PatientProfile() {
               QR + Code 128 · scan at any intake point to open this record instantly.
             </div>
             <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>
-              Portal sign-in: <strong>/portal</strong> with {patient.patient_no} + PIN (default <strong>1234</strong>).
+              Portal sign-in: <strong>/portal</strong> with {patient.patient_no} + the PIN given at registration.
             </div>
           </div>
 

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { requireAuth } from '../auth.js';
+import { cleanText, isUuid, parseDate } from '../util.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -46,8 +47,12 @@ router.post('/', async (req, res, next) => {
       return res.status(403).json({ error: 'Admins can review but not mutate tasks' });
     }
     const b = req.body || {};
-    const title = (b.title || '').trim();
+    const title = cleanText(b.title, 200);
     if (!title) return res.status(400).json({ error: 'title is required' });
+    if (b.departmentId && !isUuid(b.departmentId)) return res.status(400).json({ error: 'Unknown department' });
+    if (b.assigneeId && !isUuid(b.assigneeId)) return res.status(400).json({ error: 'Unknown assignee' });
+    const dueAt = b.dueAt ? parseDate(b.dueAt) : null;
+    if (b.dueAt && !dueAt) return res.status(400).json({ error: 'dueAt is not a valid date' });
 
     const { rows } = await pool.query(
       `INSERT INTO tasks (department_id, assignee_id, title, details, due_at, created_by)
@@ -57,8 +62,8 @@ router.post('/', async (req, res, next) => {
         b.departmentId || req.staff.department_id || null,
         b.assigneeId || null,
         title,
-        b.details || null,
-        b.dueAt || null,
+        cleanText(b.details, 5000) || null,
+        dueAt,
         req.staff.id,
       ],
     );
@@ -73,9 +78,14 @@ router.post('/:id/done', async (req, res, next) => {
     if (req.staff.role === 'admin') {
       return res.status(403).json({ error: 'Admins can review but not mutate tasks' });
     }
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Task not found' });
+    // Only people the task is visible to (its department, assignee or creator)
+    // may change it.
     const { rows } = await pool.query(
-      `UPDATE tasks SET status = 'done', done_at = now() WHERE id = $1 RETURNING id, status, done_at`,
-      [req.params.id],
+      `UPDATE tasks SET status = 'done', done_at = now()
+       WHERE id = $1 AND (department_id = $2 OR assignee_id = $3 OR created_by = $3)
+       RETURNING id, status, done_at`,
+      [req.params.id, req.staff.department_id, req.staff.id],
     );
     if (!rows[0]) return res.status(404).json({ error: 'Task not found' });
     res.json({ task: rows[0] });
@@ -89,9 +99,14 @@ router.post('/:id/reopen', async (req, res, next) => {
     if (req.staff.role === 'admin') {
       return res.status(403).json({ error: 'Admins can review but not mutate tasks' });
     }
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Task not found' });
+    // Only people the task is visible to (its department, assignee or creator)
+    // may change it.
     const { rows } = await pool.query(
-      `UPDATE tasks SET status = 'open', done_at = NULL WHERE id = $1 RETURNING id, status, done_at`,
-      [req.params.id],
+      `UPDATE tasks SET status = 'open', done_at = NULL
+       WHERE id = $1 AND (department_id = $2 OR assignee_id = $3 OR created_by = $3)
+       RETURNING id, status, done_at`,
+      [req.params.id, req.staff.department_id, req.staff.id],
     );
     if (!rows[0]) return res.status(404).json({ error: 'Task not found' });
     res.json({ task: rows[0] });

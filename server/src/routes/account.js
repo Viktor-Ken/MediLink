@@ -12,8 +12,11 @@ router.post('/password', async (req, res, next) => {
     const current = String(b.current_password || '');
     const nextPassword = String(b.new_password || '');
 
-    if (nextPassword.length < 6) {
-      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    if (nextPassword.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    }
+    if (nextPassword === current) {
+      return res.status(400).json({ error: 'New password must differ from the current one' });
     }
     const { rows } = await pool.query(
       'SELECT password_hash FROM staff WHERE id = $1',

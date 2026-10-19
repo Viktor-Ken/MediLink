@@ -83,3 +83,27 @@ export async function verifyClerkSession(token) {
   }
   return claims;
 }
+
+/**
+ * Verified email addresses for a Clerk user, fetched server-side from Clerk's
+ * Backend API. Never trust an email supplied by the browser: only addresses
+ * Clerk itself reports as verified may be used to link a staff account.
+ * Returns [] on any failure (callers then refuse to link).
+ */
+export async function fetchVerifiedEmails(userId, fetchImpl = fetch) {
+  const secret = process.env.CLERK_SECRET_KEY;
+  if (!secret || !userId) return [];
+  try {
+    const res = await fetchImpl(
+      `https://api.clerk.com/v1/users/${encodeURIComponent(userId)}`,
+      { headers: { Authorization: `Bearer ${secret}` } },
+    );
+    if (!res.ok) return [];
+    const user = await res.json();
+    return (user.email_addresses || [])
+      .filter((e) => e?.verification?.status === 'verified' && e.email_address)
+      .map((e) => String(e.email_address).trim().toLowerCase());
+  } catch {
+    return [];
+  }
+}

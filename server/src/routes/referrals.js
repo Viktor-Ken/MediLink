@@ -2,6 +2,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { requireAuth, requireRole } from '../auth.js';
 import { emitEvent } from '../events.js';
+import { cleanText, isUuid } from '../util.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -23,13 +24,22 @@ async function loadReferral(id) {
   return rows[0];
 }
 
+// Staff without a department get no blanket access; only the two departments
+// named on the referral may act on it.
 function canActOn(staff, referral) {
-  if (!staff.department_id) return true;
+  if (!staff.department_id) return false;
   return (
     staff.department_id === referral.from_department_id ||
     staff.department_id === referral.to_department_id
   );
 }
+
+// Which current statuses each action may be applied to.
+const ALLOWED_FROM = {
+  accept: ['open'],
+  decline: ['open', 'accepted'],
+  complete: ['open', 'accepted'],
+};
 
 async function resolveRelatedRefTask(refId) {
   await pool.query(
@@ -62,9 +72,14 @@ router.get('/', async (req, res, next) => {
 router.post('/', requireRole('doctor', 'nurse'), async (req, res, next) => {
   try {
     const b = req.body || {};
-    const { patientId, toDepartmentId, priority = 'routine', reason } = b;
+    const { patientId, toDepartmentId, priority = 'routine' } = b;
+    const reason = cleanText(b.reason, 2000);
     if (!patientId || !toDepartmentId || !reason) {
       return res.status(400).json({ error: 'patientId, toDepartmentId and reason are required' });
+    }
+    if (!isUuid(toDepartmentId)) return res.status(400).json({ error: 'Unknown receiving department' });
+    if (!['stat', 'urgent', 'routine'].includes(priority)) {
+      return res.status(400).json({ error: 'priority must be stat, urgent or routine' });
     }
     if (toDepartmentId === req.staff.department_id) {
       return res.status(400).json({ error: 'Receiving department must differ from your own' });
@@ -90,7 +105,7 @@ router.post('/', requireRole('doctor', 'nurse'), async (req, res, next) => {
       `INSERT INTO referrals (patient_id, from_department_id, to_department_id, priority, reason, created_by)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, created_at`,
-      [patient.id, req.staff.department_id, toDepartmentId, priority, reason.trim(), req.staff.id],
+      [patient.id, req.staff.department_id, toDepartmentId, priority, reason, req.staff.id],
     );
     const referral = rows[0];
 
@@ -122,6 +137,7 @@ router.post('/', requireRole('doctor', 'nurse'), async (req, res, next) => {
 ['accept', 'decline', 'complete'].forEach((action) => {
   router.post(`/:id/${action}`, async (req, res, next) => {
     try {
+      if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Referral not found' });
       const referral = await loadReferral(req.params.id);
       if (!referral) return res.status(404).json({ error: 'Referral not found' });
       if (req.staff.role === 'admin') {
@@ -136,10 +152,15 @@ router.post('/', requireRole('doctor', 'nurse'), async (req, res, next) => {
       const resolved = status === 'accepted' ? null : new Date();
 
       const { rows } = await pool.query(
-        `UPDATE referrals SET status = $1, resolved_at = $2 WHERE id = $3 RETURNING id, status, resolved_at`,
-        [status, resolved, referral.id],
+        `UPDATE referrals SET status = $1, resolved_at = $2
+         WHERE id = $3 AND status = ANY($4)
+         RETURNING id, status, resolved_at`,
+        [status, resolved, referral.id, ALLOWED_FROM[action]],
       );
-      if (status !== 'open') await resolveRelatedRefTask(referral.id);
+      if (!rows[0]) {
+        return res.status(409).json({ error: `Referral is ${referral.status}; it cannot be ${status}` });
+      }
+      await resolveRelatedRefTask(referral.id);
 
       await emitEvent({
         patientId: referral.patient_id,
