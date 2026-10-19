@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { hash as hashPassword } from '@node-rs/bcrypt';
 import pool from '../db.js';
 import { requireAuth, requireRole } from '../auth.js';
+import { caches, invalidate, load } from '../cache.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -19,8 +20,12 @@ const LIST_SQL = `
 
 router.get('/', async (req, res, next) => {
   try {
-    const { rows } = await pool.query(`${LIST_SQL} ORDER BY s.created_at`);
-    res.json({ staff: rows });
+    const { value, hit } = await load(caches.staff, 'all', async () => {
+      const { rows } = await pool.query(`${LIST_SQL} ORDER BY s.created_at`);
+      return rows;
+    });
+    res.set('X-Cache', hit ? 'HIT' : 'MISS');
+    res.json({ staff: value });
   } catch (err) {
     next(err);
   }
@@ -69,6 +74,7 @@ router.post('/', async (req, res, next) => {
        RETURNING id, username, full_name, role, department_id, active, email`,
       [username, passwordHash, fullName, role, b.department_id || null, email],
     );
+    invalidate(caches.staff);
     res.status(201).json({ staff: rows[0] });
   } catch (err) {
     next(err);
@@ -86,6 +92,7 @@ router.delete('/:id', async (req, res, next) => {
       [req.params.id],
     );
     if (!rows[0]) return res.status(404).json({ error: 'Active staff member not found' });
+    invalidate(caches.staff);
     res.json({ staff: { ...rows[0], active: false } });
   } catch (err) {
     next(err);

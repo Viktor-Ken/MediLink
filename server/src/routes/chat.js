@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { requireAuth } from '../auth.js';
+import { LRU } from '../lru.js';
 
 const router = Router();
 router.use(requireAuth);
 
 const WINDOW_MS = 60_000;
 const MAX_PER_WINDOW = Number(process.env.CHAT_RATE_LIMIT ?? 20);
-const hits = new Map();
-setInterval(() => hits.clear(), WINDOW_MS).unref();
+const rateLimitKeys = Math.max(1, Number(process.env.RATE_LIMIT_KEYS) || 10_000);
+const hits = new LRU({ max: rateLimitKeys, ttlMs: WINDOW_MS });
 
 const MAX_MESSAGES = 20;
 const MAX_CHARS = 4_000;
@@ -35,11 +36,10 @@ function chatConfig() {
 }
 
 function rateLimit(req, res, next) {
-  const key = req.staff?.id || req.ip || '';
-  const now = Date.now();
+  const key = req.staff?.id || req.ip || 'unknown';
   const rec = hits.get(key);
-  if (!rec || now - rec.start > WINDOW_MS) {
-    hits.set(key, { start: now, count: 1 });
+  if (!rec) {
+    hits.set(key, { count: 1 });
     return next();
   }
   rec.count++;

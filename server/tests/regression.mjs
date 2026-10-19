@@ -62,6 +62,11 @@ const POST = (path, role, body)  => req('POST', path, role, body);
 const PUT  = (path, role, body)  => req('PUT',  path, role, body);
 const DEL  = (path, role)        => req('DELETE', path, role);
 
+async function withHeader(path, role, header) {
+  const res = await fetch(`${BASE}${path}`, { headers: h(role) });
+  return res.headers.get(header);
+}
+
 /* ── test runner ─────────────────────────────────────────── */
 
 let passed = 0, failed = 0;
@@ -112,6 +117,8 @@ async function run() {
   const depts = await GET('/departments', 'doctor');
   expect('GET /departments → 200', depts.status, 200);
   expect('>= 9 departments', depts.data?.departments?.length >= 9, true);
+  const deptsCache = await withHeader('/departments', 'doctor', 'x-cache');
+  expect('repeat /departments read served from cache', deptsCache, 'HIT');
 
   // ── PATIENTS ──────────────────────────────────────────────
   const patList = await GET('/patients', 'admin');
@@ -173,8 +180,17 @@ async function run() {
   expect('admin create staff → 201', newStaff.status, 201);
   const staffId = newStaff.data?.staff?.id;
 
+  const staffCreated = await GET('/staff', 'admin');
+  check('staff list invalidated on create',
+    staffCreated.data?.staff?.some((s) => s.username === newStaff.data.staff.username));
+
   const delStaff = await DEL(`/staff/${staffId}`, 'admin');
   expect('admin deactivate staff → 200', delStaff.status, 200);
+
+  const staffDeleted = await GET('/staff', 'admin');
+  expect('staff list invalidated on delete',
+    staffDeleted.data?.staff?.find((s) => s.id === staffId)?.active, false);
+
   const loginDeact = await fetch(`${BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -3,20 +3,20 @@ import { compare } from '@node-rs/bcrypt';
 import pool from '../db.js';
 import { requireAuth, requirePatient, signPatientToken, signToken } from '../auth.js';
 import { clerkConfigured, verifyClerkSession } from '../clerk.js';
+import { LRU } from '../lru.js';
 
 const router = Router();
 
 const loginWindowMs = 60_000;
 const loginMax = Number(process.env.AUTH_RATE_LIMIT ?? 30);
-const loginHits = new Map();
-setInterval(() => loginHits.clear(), loginWindowMs).unref();
+const rateLimitKeys = Math.max(1, Number(process.env.RATE_LIMIT_KEYS) || 10_000);
+const loginHits = new LRU({ max: rateLimitKeys, ttlMs: loginWindowMs });
 
 function authRateLimit(req, res, next) {
-  const ip = req.ip || req.socket?.remoteAddress || '';
-  const now = Date.now();
-  const rec = loginHits.get(ip);
-  if (!rec || now - rec.start > loginWindowMs) {
-    loginHits.set(ip, { start: now, count: 1 });
+  const key = req.ip || req.socket?.remoteAddress || 'unknown';
+  const rec = loginHits.get(key);
+  if (!rec) {
+    loginHits.set(key, { count: 1 });
     return next();
   }
   rec.count++;
