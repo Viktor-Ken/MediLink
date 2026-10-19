@@ -1,0 +1,21 @@
+{
+  "name": "medilink-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MediLink hospital management system - API",
+  "scripts": {
+    "db:migrate": "node scripts/migrate.js",
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@node-rs/bcrypt": "^1.10.9",
+    "compression": "^1.8.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.12.0"
+  }
+}
