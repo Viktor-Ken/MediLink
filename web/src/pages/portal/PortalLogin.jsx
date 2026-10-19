@@ -76,6 +76,11 @@ export default function PortalLogin() {
         <div className="login-hint">
           <Link to="/login">← Staff sign in</Link>
         </div>
+        <p className="legal-links">
+          <Link to="/privacy">Privacy Policy</Link>
+          <span aria-hidden="true"> · </span>
+          <Link to="/terms">Terms of Service</Link>
+        </p>
       </form>
     </div>
   );

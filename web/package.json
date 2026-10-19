@@ -11,6 +11,7 @@
     "preview:lan": "vite preview --host"
   },
   "dependencies": {
+    "@clerk/react": "^6.17.8",
     "html5-qrcode": "^2.3.8",
     "jsbarcode": "^3.12.3",
     "qrcode": "^1.5.4",

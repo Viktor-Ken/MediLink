@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS scan_events (
 
 CREATE INDEX IF NOT EXISTS idx_patients_patient_no ON patients(patient_no);
 CREATE INDEX IF NOT EXISTS idx_patients_name ON patients(last_name, first_name);
+CREATE INDEX IF NOT EXISTS idx_patients_created_at ON patients(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scan_events_created ON scan_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scan_patient ON scan_events(patient_id);
 
@@ -347,3 +348,15 @@ ALTER TABLE departments ADD COLUMN IF NOT EXISTS description TEXT;
 -- ============ M8: admin manages patients & staff ============
 
 ALTER TABLE staff ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- ============ M9: optional single sign-on (Clerk) ============
+-- Email is used to bind a verified Clerk identity to a staff record the first
+-- time someone signs in. clerk_user_id then keeps that link stable.
+
+ALTER TABLE staff ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE staff ADD COLUMN IF NOT EXISTS clerk_user_id TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS staff_clerk_user_id_key
+  ON staff (clerk_user_id) WHERE clerk_user_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS staff_email_lower_key
+  ON staff (lower(email)) WHERE email IS NOT NULL;
