@@ -2,6 +2,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { requireAuth, requireRole } from '../auth.js';
 import { emitEvent } from '../events.js';
+import { caches, invalidate } from '../cache.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -89,6 +90,7 @@ router.post('/', requireRole('doctor', 'nurse'), async (req, res, next) => {
        VALUES ($1, $2, 'admission', $3, 'active', $4)`,
       [patient.id, req.staff.department_id, reason || null, req.staff.id],
     );
+    invalidate(caches.wards);
 
     await emitEvent({
       patientId: patient.id,
@@ -135,6 +137,7 @@ router.post('/:id/discharge', requireRole('doctor'), async (req, res, next) => {
        WHERE patient_id = $1 AND status = 'active'`,
       [admission.patient_id],
     );
+    invalidate(caches.wards);
 
     await emitEvent({
       patientId: admission.patient_id,

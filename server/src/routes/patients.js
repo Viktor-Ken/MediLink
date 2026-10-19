@@ -4,6 +4,7 @@ import pool, { PATIENT_COLUMNS } from '../db.js';
 import { requireAuth, requireRole } from '../auth.js';
 import { emitEvent } from '../events.js';
 import { evaluateLicense } from '../license.js';
+import { caches, invalidate } from '../cache.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -122,6 +123,7 @@ router.delete('/:id', requireRole('admin'), async (req, res, next) => {
     );
     if (!p[0]) return res.status(404).json({ error: 'Patient not found' });
     await pool.query('DELETE FROM patients WHERE id = $1', [p[0].id]);
+    invalidate(caches.wards);
     res.json({ success: true, patient_no: p[0].patient_no });
   } catch (err) {
     next(err);
@@ -170,6 +172,7 @@ const { rows } = await pool.query(
       params,
     );
     if (!rows[0]) return res.status(404).json({ error: 'Patient not found' });
+    invalidate(caches.wards);
     res.json({ patient: rows[0] });
   } catch (err) {
     next(err);

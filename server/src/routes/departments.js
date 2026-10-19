@@ -1,16 +1,21 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { requireAuth, requireRole } from '../auth.js';
+import { caches, invalidate, load } from '../cache.js';
 
 const router = Router();
 router.use(requireAuth);
 
 router.get('/', async (req, res, next) => {
   try {
-    const { rows } = await pool.query(
-      'SELECT id, name, code, floor, phone_ext, head, hours, description FROM departments ORDER BY name',
-    );
-    res.json({ departments: rows });
+    const { value, hit } = await load(caches.departments, 'all', async () => {
+      const { rows } = await pool.query(
+        'SELECT id, name, code, floor, phone_ext, head, hours, description FROM departments ORDER BY name',
+      );
+      return rows;
+    });
+    res.set('X-Cache', hit ? 'HIT' : 'MISS');
+    res.json({ departments: value });
   } catch (err) {
     next(err);
   }
@@ -31,6 +36,7 @@ router.post('/', requireRole('admin'), async (req, res, next) => {
        RETURNING id, name, code, floor, phone_ext, head, hours, description`,
       [name, code, b.floor || null, b.phone_ext || null, b.head || null, b.hours || null, b.description || null],
     );
+    invalidate(caches.departments);
     res.status(201).json({ department: rows[0] });
   } catch (err) {
     next(err);
