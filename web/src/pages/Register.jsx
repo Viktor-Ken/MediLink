@@ -24,7 +24,7 @@ const EMPTY = {
   emergency_contact_phone: '',
   emergency_contact_relation: '',
   notes: '',
-  pin: '1234',
+  pin: '',
 };
 
 export default function Register() {
@@ -222,6 +222,8 @@ export default function Register() {
           <label>Portal PIN</label>
           <input
             value={form.pin}
+            placeholder="Leave blank to generate a random PIN"
+            inputMode="numeric"
             onChange={(e) => setForm({ ...form, pin: e.target.value.replace(/[^0-9]/g, '') })}
             maxLength={8}
           />

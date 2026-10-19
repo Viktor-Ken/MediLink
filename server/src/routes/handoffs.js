@@ -2,6 +2,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { requireAuth } from '../auth.js';
 import { emitEvent } from '../events.js';
+import { cleanText, isUuid } from '../util.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -25,12 +26,14 @@ async function loadHandoff(id) {
 }
 
 function canActOn(staff, handoff) {
-  if (!staff.department_id) return true;
+  if (handoff.to_staff_id && handoff.to_staff_id === staff.id) return true;
+  if (!staff.department_id) return false;
   if (handoff.from_department_id && handoff.from_department_id === staff.department_id) return true;
   if (handoff.to_department_id && handoff.to_department_id === staff.department_id) return true;
-  if (handoff.to_staff_id) return handoff.to_staff_id === staff.id || !staff.department_id;
-  return !staff.department_id && !handoff.to_staff_id;
+  return false;
 }
+
+const ALLOWED_FROM = { accept: ['open'], complete: ['open', 'accepted'] };
 
 router.get('/', async (req, res, next) => {
   try {
@@ -56,9 +59,17 @@ router.post('/', async (req, res, next) => {
       return res.status(403).json({ error: 'Admins can review but not create handoffs' });
     }
     const b = req.body || {};
-    const { patientId, toDepartmentId, toStaffId = null, summary } = b;
+    const { patientId, toDepartmentId, toStaffId = null } = b;
+    const summary = cleanText(b.summary, 5000);
     if (!patientId || !summary) {
       return res.status(400).json({ error: 'patientId and summary are required' });
+    }
+    if (toDepartmentId && !isUuid(toDepartmentId)) return res.status(400).json({ error: 'Unknown department' });
+    if (toStaffId) {
+      if (!isUuid(toStaffId)) return res.status(400).json({ error: 'Unknown staff member' });
+      const { rows: target } = await pool.query(
+        'SELECT 1 FROM staff WHERE id = $1 AND active = TRUE', [toStaffId]);
+      if (!target[0]) return res.status(400).json({ error: 'Unknown staff member' });
     }
 
     const { rows: patients } = await pool.query(
@@ -78,7 +89,7 @@ router.post('/', async (req, res, next) => {
       `INSERT INTO handoffs (patient_id, from_department_id, to_department_id, from_staff_id, to_staff_id, summary)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, created_at`,
-      [patient.id, req.staff.department_id, toDepartmentId || null, req.staff.id, toStaffId || null, summary.trim()],
+      [patient.id, req.staff.department_id, toDepartmentId || null, req.staff.id, toStaffId || null, summary],
     );
     const handoff = rows[0];
 
@@ -118,6 +129,7 @@ router.post('/', async (req, res, next) => {
       if (req.staff.role === 'admin') {
         return res.status(403).json({ error: 'Admins can review but not act on handoffs' });
       }
+      if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Handoff not found' });
       const handoff = await loadHandoff(req.params.id);
       if (!handoff) return res.status(404).json({ error: 'Handoff not found' });
       if (!canActOn(req.staff, handoff)) {
@@ -126,9 +138,14 @@ router.post('/', async (req, res, next) => {
 
       const status = action === 'accept' ? 'accepted' : 'completed';
       const { rows } = await pool.query(
-        `UPDATE handoffs SET status = $1, resolved_at = $2 WHERE id = $3 RETURNING id, status, resolved_at`,
-        [status, action === 'accept' ? null : new Date(), handoff.id],
+        `UPDATE handoffs SET status = $1, resolved_at = $2
+         WHERE id = $3 AND status = ANY($4)
+         RETURNING id, status, resolved_at`,
+        [status, action === 'accept' ? null : new Date(), handoff.id, ALLOWED_FROM[action]],
       );
+      if (!rows[0]) {
+        return res.status(409).json({ error: `Handoff is ${handoff.status}; it cannot be ${status}` });
+      }
       await pool.query(
         `UPDATE tasks SET status = 'done', done_at = now()
          WHERE ref_type = 'handoff' AND ref_id = $1 AND status = 'open'`,

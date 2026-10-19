@@ -29,7 +29,6 @@ export default function PortalLogin() {
       nav('/portal/record');
     } catch (err) {
       setError(err.message);
-      setNote('Demo PIN for all patients is 1234');
     } finally {
       setBusy(false);
     }

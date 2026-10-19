@@ -1,8 +1,10 @@
 import { Router } from 'express';
-import { compare } from '@node-rs/bcrypt';
+import { compare, hash as hashPassword } from '@node-rs/bcrypt';
 import pool from '../db.js';
-import { requireAuth, requirePatient, signPatientToken, signToken } from '../auth.js';
-import { clerkConfigured, verifyClerkSession } from '../clerk.js';
+import {
+  createLockout, requireAuth, requirePatient, signPatientToken, signToken,
+} from '../auth.js';
+import { clerkConfigured, fetchVerifiedEmails, verifyClerkSession } from '../clerk.js';
 import { LRU } from '../lru.js';
 
 const router = Router();
@@ -11,6 +13,19 @@ const loginWindowMs = 60_000;
 const loginMax = Number(process.env.AUTH_RATE_LIMIT ?? 30);
 const rateLimitKeys = Math.max(1, Number(process.env.RATE_LIMIT_KEYS) || 10_000);
 const loginHits = new LRU({ max: rateLimitKeys, ttlMs: loginWindowMs });
+
+// Per-account lockouts (in addition to the per-IP limiter below).
+const staffLockout = createLockout({ maxFails: 8, lockMs: 10 * 60_000 });
+const patientLockout = createLockout({ maxFails: 5, lockMs: 15 * 60_000 });
+
+// Compared against when the account does not exist so response time does not
+// reveal which usernames / patient numbers are valid.
+const DUMMY_HASH = await hashPassword('medilink-timing-equaliser', 10);
+
+function lockedResponse(res, seconds) {
+  res.setHeader('Retry-After', String(seconds));
+  return res.status(429).json({ error: 'Too many failed attempts. Try again later.' });
+}
 
 function authRateLimit(req, res, next) {
   const key = req.ip || req.socket?.remoteAddress || 'unknown';
@@ -29,21 +44,28 @@ function authRateLimit(req, res, next) {
 router.post('/login', authRateLimit, async (req, res, next) => {
   try {
     const { username, password } = req.body || {};
-    if (!username || !password) {
+    if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
       return res.status(400).json({ error: 'Username and password are required' });
     }
+    const uname = username.trim();
+    const lockKey = uname.toLowerCase();
+    const wait = staffLockout.check(lockKey);
+    if (wait) return lockedResponse(res, wait);
 
     const { rows } = await pool.query(
       'SELECT id, username, password_hash, full_name, role, department_id, active FROM staff WHERE username = $1',
-      [username.trim()],
+      [uname],
     );
     const staff = rows[0];
-    if (!staff || !(await compare(password, staff.password_hash))) {
+    const passwordOk = await compare(password, staff ? staff.password_hash : DUMMY_HASH);
+    if (!staff || !passwordOk) {
+      staffLockout.fail(lockKey);
       return res.status(401).json({ error: 'Invalid username or password' });
     }
     if (staff.active === false) {
       return res.status(401).json({ error: 'This account has been deactivated' });
     }
+    staffLockout.clear(lockKey);
 
     const { password_hash, ...safe } = staff;
     res.json({ token: signToken(staff), staff: safe });
@@ -82,15 +104,23 @@ router.post('/clerk', authRateLimit, async (req, res, next) => {
     let staff = rows[0];
 
     if (!staff) {
-      const email = String(req.body?.email || '').trim().toLowerCase();
-      if (email) {
+      // Link by email only using addresses Clerk reports as verified for this
+      // user. The email in the request body is client-controlled and must never
+      // decide which staff account (e.g. an admin) a session is bound to.
+      const emails = await fetchVerifiedEmails(clerkUserId);
+      if (emails.length) {
         ({ rows } = await pool.query(
-          `SELECT ${COLS} FROM staff WHERE lower(email) = $1 AND clerk_user_id IS NULL`,
-          [email],
+          `SELECT ${COLS} FROM staff WHERE lower(email) = ANY($1) AND clerk_user_id IS NULL`,
+          [emails],
         ));
-        staff = rows[0];
+        // Exactly one match, otherwise refuse rather than guess.
+        staff = rows.length === 1 ? rows[0] : undefined;
         if (staff) {
-          await pool.query('UPDATE staff SET clerk_user_id = $1 WHERE id = $2', [clerkUserId, staff.id]);
+          const upd = await pool.query(
+            'UPDATE staff SET clerk_user_id = $1 WHERE id = $2 AND clerk_user_id IS NULL',
+            [clerkUserId, staff.id],
+          );
+          if (!upd.rowCount) staff = undefined;
         }
       }
     }
@@ -146,14 +176,21 @@ router.post('/patient-login', authRateLimit, async (req, res, next) => {
     if (!patientNo || !pin) {
       return res.status(400).json({ error: 'Patient number and PIN are required' });
     }
+    const patientKey = String(patientNo).trim().toUpperCase().slice(0, 40);
+    const wait = patientLockout.check(patientKey);
+    if (wait) return lockedResponse(res, wait);
+
     const { rows } = await pool.query(
       'SELECT id, patient_no, first_name, last_name, pin_hash FROM patients WHERE patient_no = $1',
-      [String(patientNo).trim().toUpperCase()],
+      [patientKey],
     );
     const patient = rows[0];
-    if (!patient?.pin_hash || !(await compare(String(pin), patient.pin_hash))) {
+    const pinOk = await compare(String(pin), patient?.pin_hash || DUMMY_HASH);
+    if (!patient?.pin_hash || !pinOk) {
+      patientLockout.fail(patientKey);
       return res.status(401).json({ error: 'Invalid patient number or PIN' });
     }
+    patientLockout.clear(patientKey);
     await pool.query(
       `INSERT INTO patient_events (patient_id, kind, data)
        VALUES ($1, 'portal_login', $2)`,

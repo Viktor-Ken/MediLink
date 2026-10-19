@@ -2,15 +2,18 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { requireAuth, requireRole } from '../auth.js';
 import { emitEvent } from '../events.js';
+import { cleanText, isUuid } from '../util.js';
 
 const router = Router();
 router.use(requireAuth);
 
-const KINDS = ['staff', 'doctor_patient', 'help'];
+const MAX_BODY = 5000;
 
 function canAccess(conv, staff) {
   if (conv.kind === 'staff') {
-    return conv.department_id === staff.department_id || conv.created_by === staff.id;
+    // A null department must never match another null department.
+    return (conv.department_id != null && conv.department_id === staff.department_id)
+      || conv.created_by === staff.id;
   }
   if (conv.kind === 'doctor_patient') {
     return staff.role === 'admin' || conv.created_by === staff.id;
@@ -69,16 +72,33 @@ router.get('/', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const b = req.body || {};
-    const kind = b.kind === 'doctor_patient' || b.kind === 'help' ? b.kind : 'staff';
-    const subject = (b.subject || '').trim();
+    // Private doctor<->patient chats have their own role-guarded endpoint;
+    // without this check any role could open one by passing kind=doctor_patient.
+    if (b.kind === 'doctor_patient') {
+      return res.status(403).json({ error: 'Use the doctor-patient endpoint for patient conversations' });
+    }
+    const kind = b.kind === 'help' ? 'help' : 'staff';
+    const subject = cleanText(b.subject, 200);
     if (!subject) return res.status(400).json({ error: 'subject is required' });
 
     const departmentId = b.departmentId || req.staff.department_id;
+    if (b.departmentId && !isUuid(b.departmentId)) {
+      return res.status(400).json({ error: 'Unknown department' });
+    }
+    let patientId = null;
+    if (b.patientId) {
+      const { rows: p } = await pool.query(
+        'SELECT id FROM patients WHERE id::text = $1 OR patient_no = $1',
+        [String(b.patientId)],
+      );
+      if (!p[0]) return res.status(404).json({ error: 'Patient not found' });
+      patientId = p[0].id;
+    }
     const { rows } = await pool.query(
       `INSERT INTO conversations (kind, subject, department_id, patient_id, created_by, requester_id)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, kind, subject, department_id, patient_id, created_by, created_at`,
-      [kind, subject, departmentId || null, b.patientId || null, req.staff.id, req.staff.id],
+      [kind, subject, departmentId || null, patientId, req.staff.id, req.staff.id],
     );
     res.status(201).json({ conversation: rows[0] });
   } catch (err) {
@@ -125,6 +145,7 @@ router.post('/doctor-patient', requireRole('admin', 'doctor'), async (req, res, 
 
 router.get('/:id', async (req, res, next) => {
   try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Conversation not found' });
     const { rows: convRow } = await pool.query(
       `SELECT c.id, c.subject, c.kind, c.department_id, c.patient_id, c.created_by,
               c.requester_id, c.created_at,
@@ -172,8 +193,9 @@ router.get('/:id', async (req, res, next) => {
 router.post('/:id/messages', async (req, res, next) => {
   try {
     const b = req.body || {};
-    const body = (b.body || '').trim();
+    const body = cleanText(b.body, MAX_BODY);
     if (!body) return res.status(400).json({ error: 'message body is required' });
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Conversation not found' });
 
     const { rows: convRow } = await pool.query(
       'SELECT * FROM conversations WHERE id = $1',
@@ -197,19 +219,24 @@ router.post('/:id/messages', async (req, res, next) => {
     );
 
     if (conv.patient_id) {
+      // Internal staff threads that merely reference a patient must not copy
+      // their message text into the patient's (patient-visible) event log.
+      const patientFacing = conv.kind === 'doctor_patient' || conv.kind === 'help';
       await emitEvent({
         patientId: conv.patient_id,
         staffId: req.staff.id,
         departmentId: req.staff.department_id,
         kind: 'message',
-        data: { conversation: conv.subject, body, conversationId: conv.id },
+        data: patientFacing
+          ? { conversation: conv.subject, body, conversationId: conv.id }
+          : { conversation: conv.subject, conversationId: conv.id, internal: true },
       });
     }
 
     res.status(201).json({
       message: {
         ...message,
-        sender_name: req.staff.username,
+        sender_name: req.staff.full_name || req.staff.username,
         sender_patient_id: null,
         is_read: true,
       },
@@ -221,6 +248,15 @@ router.post('/:id/messages', async (req, res, next) => {
 
 router.post('/messages/:id/read', async (req, res, next) => {
   try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Message not found' });
+    const { rows } = await pool.query(
+      `SELECT c.* FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = $1`,
+      [req.params.id],
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Message not found' });
+    if (!canAccess(rows[0], req.staff)) {
+      return res.status(403).json({ error: 'Conversation not visible to you' });
+    }
     await pool.query(
       `INSERT INTO message_reads (message_id, staff_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
       [req.params.id, req.staff.id],

@@ -128,6 +128,13 @@ export function createApp() {
   app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
   app.use((err, _req, res, _next) => {
+    // Body-parser failures (malformed JSON, oversized body) are client errors.
+    const status = Number(err?.status || err?.statusCode);
+    if (status >= 400 && status < 500) {
+      return res.status(status).json({
+        error: status === 413 ? 'Request body too large' : 'Invalid request',
+      });
+    }
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
   });

@@ -3,6 +3,7 @@ import { compare, hash as hashPassword } from '@node-rs/bcrypt';
 import pool, { PATIENT_COLUMNS } from '../db.js';
 import { requirePatient } from '../auth.js';
 import { emitEvent } from '../events.js';
+import { cleanText, isUuid, parseDate } from '../util.js';
 
 const router = Router();
 router.use(requirePatient);
@@ -53,9 +54,14 @@ router.get('/timeline', async (req, res, next) => {
        FROM patient_events e
        LEFT JOIN staff s ON s.id = e.staff_id
        WHERE e.patient_id = $1
+         AND e.kind <> 'message'
+         AND e.kind !~ '^(referral|handoff)_'
+         AND e.kind <> 'scan'
        ORDER BY e.created_at DESC LIMIT 200`,
       [req.patientId],
     );
+    // Staff-to-staff coordination (referrals, handoffs, scans, internal
+    // message text) is not patient-facing and is excluded above.
     res.json({ events: rows });
   } catch (err) {
     next(err);
@@ -136,6 +142,16 @@ router.post('/appointments', async (req, res, next) => {
     if (!scheduledFor || !b.departmentId) {
       return res.status(400).json({ error: 'departmentId and scheduled_for are required' });
     }
+    const when = parseDate(scheduledFor);
+    if (!when) return res.status(400).json({ error: 'scheduled_for is not a valid date' });
+    if (when.getTime() < Date.now() - 5 * 60_000) {
+      return res.status(400).json({ error: 'Appointments must be in the future' });
+    }
+    const duration = Number(b.duration_min ?? 30);
+    if (!Number.isInteger(duration) || duration < 5 || duration > 240) {
+      return res.status(400).json({ error: 'duration_min must be between 5 and 240' });
+    }
+    if (!isUuid(b.departmentId)) return res.status(400).json({ error: 'Unknown department' });
     const { rows: dept } = await pool.query(
       'SELECT id, name FROM departments WHERE id = $1',
       [b.departmentId],
@@ -146,7 +162,7 @@ router.post('/appointments', async (req, res, next) => {
       `INSERT INTO appointments (patient_id, department_id, scheduled_for, duration_min, reason)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, patient_id, department_id, scheduled_for, status, reason`,
-      [req.patientId, b.departmentId, new Date(scheduledFor), Number(b.duration_min || 30), b.reason || null],
+      [req.patientId, b.departmentId, when, duration, cleanText(b.reason, 500) || null],
     );
     res.status(201).json({ appointment: rows[0] });
     emitEvent({
@@ -241,10 +257,18 @@ router.get('/messages', async (req, res, next) => {
 router.post('/messages/help', async (req, res, next) => {
   try {
     const b = req.body || {};
-    const subject = (b.subject || '').trim();
-    const body = (b.body || '').trim();
+    const subject = cleanText(b.subject, 200);
+    const body = cleanText(b.body, 5000);
     if (!subject || !body) {
       return res.status(400).json({ error: 'subject and body are required' });
+    }
+    const { rows: recent } = await pool.query(
+      `SELECT count(*)::int AS n FROM conversations
+       WHERE patient_id = $1 AND kind = 'help' AND created_at > now() - interval '1 day'`,
+      [req.patientId],
+    );
+    if (recent[0].n >= 10) {
+      return res.status(429).json({ error: 'Too many help requests today. Please wait or call the hospital.' });
     }
     const { rows } = await pool.query(
       `INSERT INTO conversations (kind, subject, patient_id, created_by, requester_id)
@@ -271,6 +295,7 @@ router.post('/messages/help', async (req, res, next) => {
 
 router.get('/messages/:id', async (req, res, next) => {
   try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Conversation not found' });
     const { rows: convRow } = await pool.query(
       `SELECT c.*, s.full_name AS staff_name
        FROM conversations c
@@ -308,8 +333,9 @@ router.get('/messages/:id', async (req, res, next) => {
 router.post('/messages/:id/messages', async (req, res, next) => {
   try {
     const b = req.body || {};
-    const body = (b.body || '').trim();
+    const body = cleanText(b.body, 5000);
     if (!body) return res.status(400).json({ error: 'message body is required' });
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Conversation not found' });
 
     const { rows: convRow } = await pool.query(
       `SELECT * FROM conversations
@@ -342,14 +368,14 @@ router.post('/pin', async (req, res, next) => {
       [req.patientId],
     );
     const cur = String(req.body?.current_pin || '');
-    const next = String(req.body?.new_pin || '');
-    if (!/^\d{4,8}$/.test(next)) {
+    const newPin = String(req.body?.new_pin || '');
+    if (!/^\d{4,8}$/.test(newPin)) {
       return res.status(400).json({ error: 'New PIN must be 4–8 digits' });
     }
     if (!rows[0] || !(await compare(cur, rows[0].pin_hash))) {
       return res.status(400).json({ error: 'Current PIN is incorrect' });
     }
-    const hash = await hashPassword(next, 10);
+    const hash = await hashPassword(newPin, 10);
     await pool.query('UPDATE patients SET pin_hash = $1 WHERE id = $2', [hash, req.patientId]);
     emitEvent({
       patientId: req.patientId,

@@ -3,11 +3,23 @@ import pool from '../db.js';
 import { requireAuth, requireRole } from '../auth.js';
 import { emitEvent } from '../events.js';
 import { ewsScore } from '../ews.js';
+import { cleanText } from '../util.js';
 
 const router = Router();
 router.use(requireAuth);
 
 const NUM_FIELDS = ['temperature', 'systolic', 'diastolic', 'pulse', 'respiratory_rate', 'spo2'];
+
+// Physiologically plausible bounds; anything outside is almost certainly a
+// typing slip and would otherwise skew the early-warning score.
+const RANGES = {
+  temperature: [25, 45],
+  systolic: [30, 300],
+  diastolic: [10, 200],
+  pulse: [10, 300],
+  respiratory_rate: [2, 80],
+  spo2: [30, 100],
+};
 
 async function findPatient(patientId) {
   const { rows } = await pool.query(
@@ -28,7 +40,7 @@ async function latestVisitId(patientId) {
 
 router.post('/', requireRole('nurse', 'doctor'), async (req, res, next) => {
   try {
-    const { patientId, consciousness, notes } = req.body;
+    const { patientId, consciousness, notes } = req.body || {};
     if (!patientId) return res.status(400).json({ error: 'patientId is required' });
 
     const patient = await findPatient(patientId);
@@ -40,6 +52,10 @@ router.post('/', requireRole('nurse', 'doctor'), async (req, res, next) => {
       if (req.body[f] !== undefined && req.body[f] !== null && req.body[f] !== '') {
         const n = Number(req.body[f]);
         if (!Number.isFinite(n)) return res.status(400).json({ error: `${f} must be a number` });
+        const [lo, hi] = RANGES[f];
+        if (n < lo || n > hi) {
+          return res.status(400).json({ error: `${f} must be between ${lo} and ${hi}` });
+        }
         vital[f] = n;
         hasValue = true;
       }
@@ -73,7 +89,7 @@ router.post('/', requireRole('nurse', 'doctor'), async (req, res, next) => {
         vital.respiratory_rate ?? null,
         vital.spo2 ?? null,
         vital.consciousness ?? null,
-        notes?.trim() || null,
+        cleanText(notes, 1000) || null,
       ],
     );
 

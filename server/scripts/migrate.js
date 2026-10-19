@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hash as hashPassword } from '@node-rs/bcrypt';
@@ -83,21 +84,48 @@ async function seedDepartments(client) {
   return Object.fromEntries(rows.map((r) => [r.code, r.id]));
 }
 
+// Demo accounts / patients use publicly known credentials (admin/admin123,
+// PIN 1234). They are seeded only outside production, or when explicitly
+// requested with SEED_DEMO=1.
+const DEMO = process.env.NODE_ENV !== 'production' || process.env.SEED_DEMO === '1';
+
 async function seedStaff(client, deptId) {
+  if (!DEMO) return seedProductionAdmin(client, deptId);
   for (const [username, password, fullName, role, code] of STAFF) {
     const passwordHash = await hashPassword(password, 10);
+    // DO NOTHING: re-running the migration must never reset an existing
+    // account's password back to its default.
     await client.query(
       `INSERT INTO staff (username, password_hash, full_name, role, department_id)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
+       ON CONFLICT (username) DO NOTHING`,
       [username, passwordHash, fullName, role, deptId[code]],
     );
   }
 }
 
+let generatedAdminPassword = null;
+
+// Production: create a single admin only if none exists. The password comes
+// from SEED_ADMIN_PASSWORD, otherwise a random one is generated and printed once.
+async function seedProductionAdmin(client, deptId) {
+  const { rows } = await client.query(`SELECT 1 FROM staff WHERE role = 'admin' LIMIT 1`);
+  if (rows[0]) return;
+  const password = process.env.SEED_ADMIN_PASSWORD || randomBytes(12).toString('base64url');
+  if (password.length < 8) throw new Error('SEED_ADMIN_PASSWORD must be at least 8 characters');
+  if (!process.env.SEED_ADMIN_PASSWORD) generatedAdminPassword = password;
+  await client.query(
+    `INSERT INTO staff (username, password_hash, full_name, role, department_id)
+     VALUES ('admin', $1, 'System Administrator', 'admin', $2)
+     ON CONFLICT (username) DO NOTHING`,
+    [await hashPassword(password, 10), deptId.ADMIN],
+  );
+}
+
 const DEMO_PIN = '1234';
 
 async function seedPatients(client) {
+  if (!DEMO) return;
   const { rows: [{ n }] } = await client.query('SELECT count(*)::int AS n FROM patients');
   if (Number(n) > 0) return;
   const pinHash = await hashPassword(DEMO_PIN, 10);
@@ -119,6 +147,7 @@ async function seedPatients(client) {
 }
 
 async function seedPatientAccess(client) {
+  if (!DEMO) return;
   const pinHash = await hashPassword(DEMO_PIN, 10);
   await client.query(
     `UPDATE patients SET pin_hash = $1 WHERE pin_hash IS NULL`,
@@ -133,6 +162,8 @@ async function seedPatientAccess(client) {
 }
 
 async function seedNigeriaProfile(client) {
+  // Demo-only: would otherwise overwrite genotypes on real HM-1001..1003 records.
+  if (!DEMO) return;
   await client.query(`UPDATE patients SET genotype = 'AS' WHERE patient_no = 'HM-1001' AND genotype IS NULL`);
   await client.query(`UPDATE patients SET genotype = 'AA' WHERE patient_no = 'HM-1002' AND genotype IS NULL`);
   await client.query(`UPDATE patients SET genotype = 'AS' WHERE patient_no = 'HM-1003' AND genotype IS NULL`);
@@ -170,6 +201,7 @@ async function seedWards(client) {
 }
 
 async function seedDemoClinical(client) {
+  if (!DEMO) return;
   const { rows: [{ n }] } = await client.query('SELECT count(*)::int AS n FROM prescriptions');
   if (Number(n) > 0) return;
 
@@ -255,6 +287,7 @@ const DEMO_VITALS = [
 ];
 
 async function seedDemoVitals(client) {
+  if (!DEMO) return;
   const patientId = (await client.query(
     'SELECT id FROM patients WHERE patient_no = $1',
     [DEMO_PATIENT_NO],
@@ -315,8 +348,14 @@ async function main() {
     console.log(`  patients    : ${pats[0].n} (${nos.map((r) => r.patient_no).join(', ')}${pats[0].n > 3 ? ', ...' : ''})`);
     console.log(`  wards/beds  : ${wds[0].n} wards / ${bds[0].n} beds`);
     console.log(`  vitals      : ${vits[0].n}`);
-    console.log('  login       : admin / admin123');
-    console.log('  portal PIN  : all patients use 1234 (change-worthy)');
+    if (DEMO) {
+      console.log('  login       : admin / admin123 (demo data — do not use in production)');
+      console.log('  portal PIN  : demo patients use 1234 (demo data — do not use in production)');
+    } else if (generatedAdminPassword) {
+      console.log(`  admin login : admin / ${generatedAdminPassword}  (generated — shown once, change it after first sign-in)`);
+    } else {
+      console.log('  demo data skipped (production). Set SEED_DEMO=1 to load it.');
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Migration failed:', err.stack);
