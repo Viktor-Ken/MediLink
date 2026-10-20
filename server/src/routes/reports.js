@@ -27,6 +27,59 @@ async function sendCsv(res, filename, rows) {
   res.send(toCsv(rows, COLS[filename]));
 }
 
+// Department workload: one row per department, joined to the staff, referral,
+// task, appointment and inpatient counts that belong to it. Each count is
+// pre-aggregated in its own derived table and then LEFT JOINed on department id,
+// so departments with no activity still appear (as zeros) and the joins cannot
+// multiply each other's rows.
+const WORKLOAD_SQL = `
+  SELECT d.name AS department,
+         d.code,
+         COALESCE(st.n, 0)  AS staff,
+         COALESCE(ri.n, 0)  AS referrals_in,
+         COALESCE(ri.stat, 0) AS stat_referrals_in,
+         COALESCE(ro.n, 0)  AS referrals_out,
+         COALESCE(tk.n, 0)  AS open_tasks,
+         COALESCE(ap.n, 0)  AS upcoming_appointments,
+         COALESCE(ip.n, 0)  AS inpatients
+  FROM departments d
+  LEFT JOIN (
+    SELECT department_id, count(*)::int AS n
+    FROM staff WHERE active = TRUE GROUP BY department_id
+  ) st ON st.department_id = d.id
+  LEFT JOIN (
+    SELECT to_department_id AS department_id, count(*)::int AS n,
+           count(*) FILTER (WHERE priority = 'stat')::int AS stat
+    FROM referrals WHERE status IN ('open', 'accepted') GROUP BY to_department_id
+  ) ri ON ri.department_id = d.id
+  LEFT JOIN (
+    SELECT from_department_id AS department_id, count(*)::int AS n
+    FROM referrals WHERE status IN ('open', 'accepted') GROUP BY from_department_id
+  ) ro ON ro.department_id = d.id
+  LEFT JOIN (
+    SELECT department_id, count(*)::int AS n
+    FROM tasks WHERE status = 'open' GROUP BY department_id
+  ) tk ON tk.department_id = d.id
+  LEFT JOIN (
+    SELECT department_id, count(*)::int AS n
+    FROM appointments WHERE status = 'scheduled' AND scheduled_for >= now() GROUP BY department_id
+  ) ap ON ap.department_id = d.id
+  LEFT JOIN (
+    SELECT w.department_id, count(*)::int AS n
+    FROM admissions a JOIN wards w ON w.id = a.ward_id
+    WHERE a.status = 'active' GROUP BY w.department_id
+  ) ip ON ip.department_id = d.id
+  ORDER BY d.name`;
+
+router.get('/department-workload', async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(WORKLOAD_SQL);
+    res.json({ departments: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/stats', async (req, res, next) => {
   try {
     const [
@@ -116,10 +169,12 @@ const COLS = {
   events: ['created_at', 'patient_no', 'kind', 'data', 'staff', 'department'],
   consents: ['set_at', 'patient_no', 'kind', 'status', 'set_via', 'set_by', 'note'],
   scans: ['created_at', 'patient_no', 'action', 'location', 'staff'],
+  departments: ['department', 'code', 'staff', 'referrals_in', 'stat_referrals_in', 'referrals_out', 'open_tasks', 'upcoming_appointments', 'inpatients'],
   vitals: ['recorded_at', 'patient_no', 'temperature', 'systolic', 'diastolic', 'pulse', 'respiratory_rate', 'spo2', 'consciousness', 'notes', 'recorded_by'],
 };
 
 const EXPORTS = {
+  departments: WORKLOAD_SQL,
   patients: `SELECT patient_no, first_name, last_name, dob::text AS dob, gender, blood_type,
                     genotype, nin, nhis_no,
                     array_to_string(allergies, ', ') AS allergies,
