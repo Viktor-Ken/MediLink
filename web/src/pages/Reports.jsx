@@ -11,6 +11,7 @@ const EXPORTS = [
   ['consents', 'Consents'],
   ['scans', 'Scan access log'],
   ['vitals', 'Vitals log'],
+  ['departments', 'Department workload'],
 ];
 
 function kpiCards(s) {
@@ -26,6 +27,7 @@ function kpiCards(s) {
 
 export default function Reports() {
   const [s, setS] = useState(null);
+  const [workload, setWorkload] = useState([]);
   const [error, setError] = useState('');
   const [downloading, setDownloading] = useState('');
 
@@ -33,6 +35,9 @@ export default function Reports() {
     api('/reports/stats')
       .then(setS)
       .catch((e) => setError(e.message));
+    api('/reports/department-workload')
+      .then((d) => setWorkload(d.departments))
+      .catch(() => {});
   }, []);
 
   async function exportCsv(type) {
@@ -141,6 +146,29 @@ export default function Reports() {
           </div>
           <div className="psub">{Math.round((100 * occBeds) / totalBeds)}% occupied</div>
         </div>
+      </div>
+
+      <div className="card">
+        <h3>Department workload</h3>
+        <p className="psub" style={{ marginTop: -6 }}>
+          Open work per department, combined from staff, referrals, tasks, appointments and wards.
+        </p>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Department</th><th>Staff</th><th>Referrals in</th><th>Stat</th>
+              <th>Referrals out</th><th>Open tasks</th><th>Upcoming appts</th><th>Inpatients</th>
+            </tr>
+          </thead>
+          <tbody>
+            {workload.map((w) => (
+              <tr key={w.code}>
+                <td>{w.department}</td><td>{w.staff}</td><td>{w.referrals_in}</td><td>{w.stat_referrals_in}</td>
+                <td>{w.referrals_out}</td><td>{w.open_tasks}</td><td>{w.upcoming_appointments}</td><td>{w.inpatients}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <div className="card">
