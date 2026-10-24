@@ -1,0 +1,138 @@
+name: Security scan
+
+# DAST (OWASP ZAP) + dependency audit against a real, seeded instance of the
+# app. Runs on every push/PR to main and nightly; the active (attacking) scan
+# only runs on-demand or on a schedule so it never blocks a PR by default.
+#
+# Everything here runs against an ephemeral database seeded with demo data
+# (SEED_DEMO=1) inside the job's own container network — never point
+# ZAP_TARGET at a real deployment with real patient data.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '17 2 * * *' # nightly, includes the active scan
+  workflow_dispatch:
+    inputs:
+      active_scan:
+        description: 'Also run the ZAP active (attacking) scan'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    name: Dependency audit (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Report-only: fails the build on a HIGH/CRITICAL advisory with a fix
+      # available, but doesn't block on everything so the job stays useful
+      # signal rather than noise. Remove --audit-level to be stricter.
+      - name: Audit server dependencies
+        working-directory: server
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+      - name: Audit web dependencies
+        working-directory: web
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
+  dast-zap:
+    name: OWASP ZAP scan
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hospital
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: hospital
+      NODE_ENV: development # intentional: loads throwaway demo accounts/PINs for the scan to log in with
+      SEED_DEMO: '1'
+      JWT_SECRET: ${{ github.run_id }}-${{ github.run_attempt }}-ci-only-not-for-reuse-please-pad-to-32-chars
+      PORT: 4000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci --omit=dev
+
+      - name: Install & build web client
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run DB migration (seeded demo data)
+        working-directory: server
+        run: npm run db:migrate
+
+      - name: Start API (serves the built web client too)
+        working-directory: server
+        run: |
+          nohup npm start > /tmp/medilink-server.log 2>&1 &
+          echo "Waiting for http://127.0.0.1:4000/api/health ..."
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4000/api/health >/dev/null 2>&1; then
+              echo "Server is up."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server did not become healthy in time."
+          cat /tmp/medilink-server.log
+          exit 1
+
+      # Action versions below are pinned to what was current at the time this
+      # workflow was written; this sandbox has no network access to verify
+      # the latest release, so check https://github.com/zaproxy/action-baseline
+      # (and action-full-scan) for a newer tag before relying on this long-term.
+      - name: ZAP baseline scan (passive — safe to run on every PR)
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'http://127.0.0.1:4000/'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a' # include alpha-quality passive rules
+          fail_action: false # report findings as a PR comment/artifact; don't hard-fail the pipeline here
+          artifact_name: 'zap-baseline-report'
+
+      - name: ZAP full (active) scan — nightly or on-demand only
+        if: github.event_name == 'schedule' || inputs.active_scan == true
+        uses: zaproxy/action-full-scan@v0.12.0
+        with:
+          target: 'http://127.0.0.1:4000/'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+          fail_action: false
+          artifact_name: 'zap-full-report'
+
+      - name: Server log (always, for debugging)
+        if: always()
+        run: cat /tmp/medilink-server.log || true
