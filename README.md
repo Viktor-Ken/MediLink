@@ -113,3 +113,9 @@ server/   API (Express) — src/routes/*, schema.sql, migrate.js, smoke tests
 web/      React SPA (Vite) — src/pages/*, src/components/*
 DESIGN.md Living design doc (vision, data model, roadmap, decisions)
 ```
+
+## Security testing
+
+CI runs an OWASP ZAP scan and a dependency audit on every PR to `main` (plus
+a nightly active/attacking ZAP scan). See [SECURITY-TESTING.md](SECURITY-TESTING.md)
+for what runs, how to triage a finding, and how to run ZAP locally.

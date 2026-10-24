@@ -1,0 +1,12 @@
+# OWASP ZAP alert overrides for MediLink.
+#
+# Format (tab-separated): <rule-id>	<IGNORE|WARN|FAIL>	[<url-regex>]
+# Rule IDs: https://www.zaproxy.org/docs/alerts/
+#
+# Nothing is suppressed here by default — every alert ZAP raises is left at
+# its default severity so CI shows the real result. Add a line here only
+# after a finding has been triaged and is a genuine false positive or an
+# accepted risk, and say why in a comment next to it, e.g.:
+#
+# 10202	IGNORE	.*	# Absence of Anti-CSRF Tokens — API is JWT-bearer-token
+#                      auth only (no cookies), so CSRF does not apply here.
