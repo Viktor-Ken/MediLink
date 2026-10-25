@@ -124,6 +124,11 @@ jobs:
       # workflow was written; this sandbox has no network access to verify
       # the latest release, so check https://github.com/zaproxy/action-baseline
       # (and action-full-scan) for a newer tag before relying on this long-term.
+      # artifact_name is intentionally not passed here: the action's own
+      # built-in upload-artifact call rejected that input as an invalid
+      # artifact name in practice (observed in CI, not just a docs quirk),
+      # so we skip its internal upload and do our own below instead, against
+      # the report files it still writes to the workspace either way.
       - name: ZAP baseline scan (passive — safe to run on every PR)
         uses: zaproxy/action-baseline@v0.12.0
         with:
@@ -131,7 +136,18 @@ jobs:
           rules_file_name: '.zap/rules.tsv'
           cmd_options: '-a' # include alpha-quality passive rules
           fail_action: false # report findings as a PR comment/artifact; don't hard-fail the pipeline here
-          artifact_name: 'zap-baseline-report'
+
+      - name: Upload ZAP baseline report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report
+          path: |
+            report_html.html
+            report_md.md
+            report_json.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: ZAP full (active) scan — nightly or on-demand only
         if: github.event_name == 'schedule' || inputs.active_scan == true
@@ -141,7 +157,18 @@ jobs:
           rules_file_name: '.zap/rules.tsv'
           cmd_options: '-a'
           fail_action: false
-          artifact_name: 'zap-full-report'
+
+      - name: Upload ZAP full-scan report
+        if: github.event_name == 'schedule' || inputs.active_scan == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-full-report
+          path: |
+            report_html.html
+            report_md.md
+            report_json.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Server log (always, for debugging)
         if: always()
