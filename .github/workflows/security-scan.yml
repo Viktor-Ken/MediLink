@@ -5,8 +5,16 @@ name: Security scan
 # only runs on-demand or on a schedule so it never blocks a PR by default.
 #
 # Everything here runs against an ephemeral database seeded with demo data
-# (SEED_DEMO=1) inside the job's own container network — never point
-# ZAP_TARGET at a real deployment with real patient data.
+# (SEED_DEMO=1) inside the job's own container network — never point this at
+# a real deployment with real patient data.
+#
+# ZAP runs via the official Docker image directly (not the zaproxy/action-*
+# GitHub Actions): those composite actions' own internal artifact-upload step
+# failed in CI with "Create Artifact Container failed" regardless of what we
+# passed them — most likely because that pinned action version still calls
+# GitHub's old, since-retired artifact upload API. Running the image
+# ourselves sidesteps that, and matches exactly the local command documented
+# in SECURITY-TESTING.md, so CI and a local run behave the same way.
 
 on:
   push:
@@ -49,16 +57,6 @@ jobs:
   dast-zap:
     name: OWASP ZAP scan
     runs-on: ubuntu-latest
-    # The ZAP action publishes its results itself: a comment on the PR when
-    # triggered by pull_request, or a tracking GitHub Issue (created once,
-    # then updated in place on later runs) when triggered by push/schedule/
-    # workflow_dispatch. Both need write access beyond the default
-    # contents:read above, or the action fails with "Resource not
-    # accessible by integration" after the scan has already run.
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: write
     services:
       postgres:
         image: postgres:17
@@ -120,22 +118,23 @@ jobs:
           cat /tmp/medilink-server.log
           exit 1
 
-      # Action versions below are pinned to what was current at the time this
-      # workflow was written; this sandbox has no network access to verify
-      # the latest release, so check https://github.com/zaproxy/action-baseline
-      # (and action-full-scan) for a newer tag before relying on this long-term.
-      # artifact_name is intentionally not passed here: the action's own
-      # built-in upload-artifact call rejected that input as an invalid
-      # artifact name in practice (observed in CI, not just a docs quirk),
-      # so we skip its internal upload and do our own below instead, against
-      # the report files it still writes to the workspace either way.
+      # --network host: the GitHub-hosted runner is Linux, so the container
+      # reaches the app (running directly on the runner, not in a container)
+      # at 127.0.0.1:4000 only if it shares the runner's network namespace.
+      # --user root: zap-stable's default non-root user can't write into the
+      # bind-mounted .zap/ directory with the runner's host UID otherwise.
+      # The image tag is unpinned (zap-stable tracks ZAP's latest stable
+      # release, same as the local command in SECURITY-TESTING.md) — this
+      # sandbox has no network access to verify a specific digest to pin to.
       - name: ZAP baseline scan (passive — safe to run on every PR)
-        uses: zaproxy/action-baseline@v0.12.0
-        with:
-          target: 'http://127.0.0.1:4000/'
-          rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a' # include alpha-quality passive rules
-          fail_action: false # report findings as a PR comment/artifact; don't hard-fail the pipeline here
+        run: |
+          docker run --rm --network host --user root \
+            -v "$PWD/.zap:/zap/wrk/:rw" \
+            -t zaproxy/zap-stable zap-baseline.py \
+            -t http://127.0.0.1:4000/ -a \
+            -c rules.tsv \
+            -r report_html.html -w report_md.md -J report_json.json \
+          || echo "::warning::ZAP baseline scan reported alerts (non-zero exit) — see the uploaded report artifact"
 
       - name: Upload ZAP baseline report
         if: always()
@@ -143,20 +142,22 @@ jobs:
         with:
           name: zap-baseline-report
           path: |
-            report_html.html
-            report_md.md
-            report_json.json
+            .zap/report_html.html
+            .zap/report_md.md
+            .zap/report_json.json
           if-no-files-found: warn
           retention-days: 30
 
       - name: ZAP full (active) scan — nightly or on-demand only
         if: github.event_name == 'schedule' || inputs.active_scan == true
-        uses: zaproxy/action-full-scan@v0.12.0
-        with:
-          target: 'http://127.0.0.1:4000/'
-          rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a'
-          fail_action: false
+        run: |
+          docker run --rm --network host --user root \
+            -v "$PWD/.zap:/zap/wrk/:rw" \
+            -t zaproxy/zap-stable zap-full-scan.py \
+            -t http://127.0.0.1:4000/ -a \
+            -c rules.tsv \
+            -r report_html.html -w report_md.md -J report_json.json \
+          || echo "::warning::ZAP full scan reported alerts (non-zero exit) — see the uploaded report artifact"
 
       - name: Upload ZAP full-scan report
         if: github.event_name == 'schedule' || inputs.active_scan == true
@@ -164,9 +165,9 @@ jobs:
         with:
           name: zap-full-report
           path: |
-            report_html.html
-            report_md.md
-            report_json.json
+            .zap/report_html.html
+            .zap/report_md.md
+            .zap/report_json.json
           if-no-files-found: warn
           retention-days: 30
 
