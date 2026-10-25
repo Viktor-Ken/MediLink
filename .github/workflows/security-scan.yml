@@ -49,6 +49,16 @@ jobs:
   dast-zap:
     name: OWASP ZAP scan
     runs-on: ubuntu-latest
+    # The ZAP action publishes its results itself: a comment on the PR when
+    # triggered by pull_request, or a tracking GitHub Issue (created once,
+    # then updated in place on later runs) when triggered by push/schedule/
+    # workflow_dispatch. Both need write access beyond the default
+    # contents:read above, or the action fails with "Resource not
+    # accessible by integration" after the scan has already run.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     services:
       postgres:
         image: postgres:17
