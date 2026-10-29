@@ -18,6 +18,24 @@ router.use((_req, res, next) => {
   next();
 });
 
+// Roles with no clinical or registration need for national ID, insurance,
+// or medical-history fields (audit finding: patients.js read endpoints had
+// no role restriction at all, unlike equivalent clinical-data routes
+// elsewhere in the app). Everyone can still look up and open a patient —
+// restricting that would break the shared PatientProfile page these roles
+// legitimately use from Pharmacy/Scan/Coordination/Wards — but these
+// specific fields are stripped from the response for roles that don't need
+// them, rather than gating the whole endpoint.
+const PHI_RESTRICTED_ROLES = new Set(['receptionist', 'optometrist']);
+const PHI_RESTRICTED_FIELDS = ['nin', 'nhis_no', 'allergies', 'conditions', 'medications'];
+
+function redactPhiForRole(patient, role) {
+  if (!patient || !PHI_RESTRICTED_ROLES.has(role)) return patient;
+  const copy = { ...patient };
+  for (const field of PHI_RESTRICTED_FIELDS) delete copy[field];
+  return copy;
+}
+
 export function toList(value) {
   if (Array.isArray(value)) return value;
   if (typeof value === 'string') {
@@ -36,7 +54,7 @@ router.get('/', async (req, res, next) => {
       const { rows } = await pool.query(
         `SELECT ${PATIENT_COLUMNS} FROM patients ORDER BY created_at DESC LIMIT 100`,
       );
-      return res.json({ patients: rows });
+      return res.json({ patients: rows.map((p) => redactPhiForRole(p, req.staff.role)) });
     }
     const like = `%${escapeLike(q.slice(0, 100))}%`;
     const { rows } = await pool.query(
@@ -46,7 +64,7 @@ router.get('/', async (req, res, next) => {
        ORDER BY last_name, first_name LIMIT 50`,
       [like],
     );
-    res.json({ patients: rows });
+    res.json({ patients: rows.map((p) => redactPhiForRole(p, req.staff.role)) });
   } catch (err) {
     next(err);
   }
@@ -121,7 +139,7 @@ router.get('/:id', async (req, res, next) => {
       [req.params.id],
     );
     if (!rows[0]) return res.status(404).json({ error: 'Patient not found' });
-    res.json({ patient: rows[0] });
+    res.json({ patient: redactPhiForRole(rows[0], req.staff.role) });
   } catch (err) {
     next(err);
   }

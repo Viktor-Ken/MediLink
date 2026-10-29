@@ -173,6 +173,13 @@ const COLS = {
   vitals: ['recorded_at', 'patient_no', 'temperature', 'systolic', 'diastolic', 'pulse', 'respiratory_rate', 'spo2', 'consciousness', 'notes', 'recorded_by'],
 };
 
+// Each export is a one-click full-table pull for compliance audits, so it
+// deliberately has no date-range/offset UI — but an unbounded query still
+// shouldn't be able to buffer an unlimited row count into memory on a single
+// request. This cap is far above any realistic single-hospital table size;
+// it exists to bound worst-case memory/CPU, not to truncate real exports.
+const EXPORT_ROW_CAP = 200_000;
+
 const EXPORTS = {
   departments: WORKLOAD_SQL,
   patients: `SELECT patient_no, first_name, last_name, dob::text AS dob, gender, blood_type,
@@ -181,7 +188,7 @@ const EXPORTS = {
                     array_to_string(conditions, ', ') AS conditions,
                     array_to_string(medications, ', ') AS medications,
                     emergency_contact_name, emergency_contact_phone, created_at
-             FROM patients ORDER BY patient_no`,
+             FROM patients ORDER BY patient_no LIMIT ${EXPORT_ROW_CAP}`,
   referrals: `SELECT r.created_at, p.patient_no,
                      df.name AS from_department, dt.name AS to_department,
                      r.priority, r.status, r.reason, r.resolved_at
@@ -189,7 +196,7 @@ const EXPORTS = {
               JOIN patients p ON p.id = r.patient_id
               LEFT JOIN departments df ON df.id = r.from_department_id
               LEFT JOIN departments dt ON dt.id = r.to_department_id
-              ORDER BY r.created_at`,
+              ORDER BY r.created_at LIMIT ${EXPORT_ROW_CAP}`,
   admissions: `SELECT a.admitted_at, p.patient_no, w.name AS ward, b.label AS bed,
                       a.reason, a.status, a.discharged_at,
                       s.full_name AS admitted_by
@@ -198,7 +205,7 @@ const EXPORTS = {
                LEFT JOIN wards w ON w.id = a.ward_id
                LEFT JOIN beds b ON b.id = a.bed_id
                LEFT JOIN staff s ON s.id = a.admitted_by
-               ORDER BY a.admitted_at`,
+               ORDER BY a.admitted_at LIMIT ${EXPORT_ROW_CAP}`,
   prescriptions: `SELECT pr.created_at, p.patient_no,
                          pr.status, pr.notes,
                          string_agg(pi.drug_name || COALESCE(' ' || pi.dose, ''), '; ') AS drugs,
@@ -208,7 +215,7 @@ const EXPORTS = {
                   LEFT JOIN prescription_items pi ON pi.prescription_id = pr.id
                   LEFT JOIN staff s ON s.id = pr.prescribed_by
                   GROUP BY pr.id, p.patient_no, s.full_name
-                  ORDER BY pr.created_at`,
+                  ORDER BY pr.created_at LIMIT ${EXPORT_ROW_CAP}`,
   investigations: `SELECT i.created_at AS ordered_at, p.patient_no, i.kind, i.test_name,
                           i.status, i.result_json->>'text' AS result,
                           d.name AS department,
@@ -217,33 +224,33 @@ const EXPORTS = {
                    JOIN patients p ON p.id = i.patient_id
                    LEFT JOIN departments d ON d.id = i.department_id
                    LEFT JOIN staff s ON s.id = i.ordered_by
-                   ORDER BY i.created_at`,
+                   ORDER BY i.created_at LIMIT ${EXPORT_ROW_CAP}`,
   events: `SELECT e.created_at, p.patient_no, e.kind, e.data::text AS data,
                   s.full_name AS staff, d.name AS department
            FROM patient_events e
            JOIN patients p ON p.id = e.patient_id
            LEFT JOIN staff s ON s.id = e.staff_id
            LEFT JOIN departments d ON d.id = e.department_id
-           ORDER BY e.created_at`,
+           ORDER BY e.created_at LIMIT ${EXPORT_ROW_CAP}`,
   consents: `SELECT c.set_at, p.patient_no, c.kind, c.status, c.set_via,
                     s.full_name AS set_by, c.note
              FROM patient_consents c
              JOIN patients p ON p.id = c.patient_id
              LEFT JOIN staff s ON s.id = c.set_by_staff
-             ORDER BY c.patient_id, c.kind`,
+             ORDER BY c.patient_id, c.kind LIMIT ${EXPORT_ROW_CAP}`,
   scans: `SELECT e.created_at, p.patient_no, e.action, e.location,
                  s.full_name AS staff
           FROM scan_events e
           JOIN patients p ON p.id = e.patient_id
           LEFT JOIN staff s ON s.id = e.staff_id
-          ORDER BY e.created_at`,
+          ORDER BY e.created_at LIMIT ${EXPORT_ROW_CAP}`,
   vitals: `SELECT v.recorded_at, p.patient_no, v.temperature, v.systolic, v.diastolic,
                  v.pulse, v.respiratory_rate, v.spo2, v.consciousness, v.notes,
                  s.full_name AS recorded_by
           FROM vitals v
           JOIN patients p ON p.id = v.patient_id
           LEFT JOIN staff s ON s.id = v.recorded_by
-          ORDER BY v.recorded_at`,
+          ORDER BY v.recorded_at LIMIT ${EXPORT_ROW_CAP}`,
 };
 
 router.get('/export/:type', async (req, res, next) => {

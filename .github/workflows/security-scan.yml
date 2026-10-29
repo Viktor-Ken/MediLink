@@ -42,17 +42,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Report-only: fails the build on a HIGH/CRITICAL advisory with a fix
-      # available, but doesn't block on everything so the job stays useful
-      # signal rather than noise. Remove --audit-level to be stricter.
+      # Fails the build on a HIGH/CRITICAL advisory with a fix available, but
+      # not on everything, so the job stays useful signal rather than noise.
+      # Remove --audit-level to be stricter. This step used to carry
+      # continue-on-error: true, which meant npm audit could never actually
+      # block a PR regardless of what it found — make it a required check in
+      # branch protection once the team has triaged a few real runs.
       - name: Audit server dependencies
         working-directory: server
         run: npm audit --omit=dev --audit-level=high
-        continue-on-error: true
       - name: Audit web dependencies
         working-directory: web
         run: npm audit --omit=dev --audit-level=high
-        continue-on-error: true
 
   dast-zap:
     name: OWASP ZAP scan
