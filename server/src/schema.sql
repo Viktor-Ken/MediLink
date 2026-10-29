@@ -360,3 +360,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS staff_clerk_user_id_key
   ON staff (clerk_user_id) WHERE clerk_user_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS staff_email_lower_key
   ON staff (lower(email)) WHERE email IS NOT NULL;
+
+-- ============ M10: revoke outstanding sessions on password change ============
+-- Each staff JWT carries the token_version that was current when it was
+-- issued. Bumping this column (e.g. on a password change) makes every
+-- previously-issued token fail verification immediately, instead of staying
+-- valid for the rest of its 12h lifetime.
+
+ALTER TABLE staff ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
+
+-- ============ M11: cluster-wide login lockout ============
+-- Per-account failed-login counters used to live only in each Node worker's
+-- memory, so the effective guess budget scaled with worker count. A shared
+-- table makes the limit the same regardless of which worker handles a given
+-- request.
+
+CREATE TABLE IF NOT EXISTS login_lockouts (
+  key TEXT PRIMARY KEY,
+  fails INTEGER NOT NULL DEFAULT 0,
+  locked_until TIMESTAMPTZ,
+  last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

@@ -55,7 +55,11 @@ export function createApp() {
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: blob:${clerkSrc}`,
     "font-src 'self' data:",
-    `connect-src 'self' ws: wss:${clerkSrc}`,
+    // No part of this app opens a WebSocket/EventSource connection, so there
+    // is nothing for a 'ws:'/'wss:' allowance to legitimately cover — it was
+    // previously scheme-only (no host restriction), which would have let an
+    // XSS exfiltrate data to any attacker-controlled wss:// endpoint.
+    `connect-src 'self'${clerkSrc}`,
     clerkOn ? `frame-src 'self' https://challenges.cloudflare.com${clerkSrc}` : "frame-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'self'",

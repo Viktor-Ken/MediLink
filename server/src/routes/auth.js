@@ -15,8 +15,8 @@ const rateLimitKeys = Math.max(1, Number(process.env.RATE_LIMIT_KEYS) || 10_000)
 const loginHits = new LRU({ max: rateLimitKeys, ttlMs: loginWindowMs });
 
 // Per-account lockouts (in addition to the per-IP limiter below).
-const staffLockout = createLockout({ maxFails: 8, lockMs: 10 * 60_000 });
-const patientLockout = createLockout({ maxFails: 5, lockMs: 15 * 60_000 });
+const staffLockout = createLockout({ maxFails: 8, lockMs: 10 * 60_000, bucket: 'staff' });
+const patientLockout = createLockout({ maxFails: 5, lockMs: 15 * 60_000, bucket: 'patient' });
 
 // Compared against when the account does not exist so response time does not
 // reveal which usernames / patient numbers are valid.
@@ -49,25 +49,25 @@ router.post('/login', authRateLimit, async (req, res, next) => {
     }
     const uname = username.trim();
     const lockKey = uname.toLowerCase();
-    const wait = staffLockout.check(lockKey);
+    const wait = await staffLockout.check(lockKey);
     if (wait) return lockedResponse(res, wait);
 
     const { rows } = await pool.query(
-      'SELECT id, username, password_hash, full_name, role, department_id, active FROM staff WHERE username = $1',
+      'SELECT id, username, password_hash, full_name, role, department_id, active, token_version FROM staff WHERE username = $1',
       [uname],
     );
     const staff = rows[0];
     const passwordOk = await compare(password, staff ? staff.password_hash : DUMMY_HASH);
     if (!staff || !passwordOk) {
-      staffLockout.fail(lockKey);
+      await staffLockout.fail(lockKey);
       return res.status(401).json({ error: 'Invalid username or password' });
     }
     if (staff.active === false) {
       return res.status(401).json({ error: 'This account has been deactivated' });
     }
-    staffLockout.clear(lockKey);
+    await staffLockout.clear(lockKey);
 
-    const { password_hash, ...safe } = staff;
+    const { password_hash, token_version, ...safe } = staff;
     res.json({ token: signToken(staff), staff: safe });
   } catch (err) {
     next(err);
@@ -99,7 +99,7 @@ router.post('/clerk', authRateLimit, async (req, res, next) => {
     if (!clerkUserId) return res.status(401).json({ error: 'Invalid Clerk session' });
 
     // Prefer a stable link (clerk_user_id); otherwise match on verified email.
-    const COLS = 'id, username, password_hash, full_name, role, department_id, active, email, clerk_user_id';
+    const COLS = 'id, username, password_hash, full_name, role, department_id, active, email, clerk_user_id, token_version';
     let { rows } = await pool.query(`SELECT ${COLS} FROM staff WHERE clerk_user_id = $1`, [clerkUserId]);
     let staff = rows[0];
 
@@ -134,7 +134,7 @@ router.post('/clerk', authRateLimit, async (req, res, next) => {
       return res.status(401).json({ error: 'This account has been deactivated' });
     }
 
-    const { password_hash, clerk_user_id, ...safe } = staff;
+    const { password_hash, clerk_user_id, token_version, ...safe } = staff;
     res.json({ token: signToken(staff), staff: safe });
   } catch (err) {
     next(err);
@@ -177,7 +177,7 @@ router.post('/patient-login', authRateLimit, async (req, res, next) => {
       return res.status(400).json({ error: 'Patient number and PIN are required' });
     }
     const patientKey = String(patientNo).trim().toUpperCase().slice(0, 40);
-    const wait = patientLockout.check(patientKey);
+    const wait = await patientLockout.check(patientKey);
     if (wait) return lockedResponse(res, wait);
 
     const { rows } = await pool.query(
@@ -187,10 +187,10 @@ router.post('/patient-login', authRateLimit, async (req, res, next) => {
     const patient = rows[0];
     const pinOk = await compare(String(pin), patient?.pin_hash || DUMMY_HASH);
     if (!patient?.pin_hash || !pinOk) {
-      patientLockout.fail(patientKey);
+      await patientLockout.fail(patientKey);
       return res.status(401).json({ error: 'Invalid patient number or PIN' });
     }
-    patientLockout.clear(patientKey);
+    await patientLockout.clear(patientKey);
     await pool.query(
       `INSERT INTO patient_events (patient_id, kind, data)
        VALUES ($1, 'portal_login', $2)`,
