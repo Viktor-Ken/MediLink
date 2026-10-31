@@ -381,3 +381,18 @@ CREATE TABLE IF NOT EXISTS login_lockouts (
   locked_until TIMESTAMPTZ,
   last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ============ M12: idempotency keys ============
+-- A client retry after a timeout (e.g. an appointment-booking request that
+-- succeeded server-side but whose response never arrived) previously had no
+-- way to avoid double-submitting. response_status is NULL while a request
+-- with this key is still being processed, and gets filled in once it
+-- completes, so a retry can either replay the finished result or be told a
+-- matching request is already in flight.
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  key TEXT PRIMARY KEY,
+  response_status INTEGER,
+  response_body JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
