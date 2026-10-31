@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from '../auth.js';
 import { emitEvent } from '../events.js';
 import { caches, invalidate } from '../cache.js';
 import { cleanText, isUuid } from '../util.js';
+import { idempotent } from '../idempotency.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -45,7 +46,7 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-router.post('/', requireRole('doctor', 'nurse'), async (req, res, next) => {
+router.post('/', requireRole('doctor', 'nurse'), idempotent('admissions.create'), async (req, res, next) => {
   const { patientId, wardId, reason } = req.body || {};
   if (!patientId) {
     return res.status(400).json({ error: 'patientId is required' });

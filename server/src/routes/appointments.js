@@ -3,6 +3,7 @@ import pool from '../db.js';
 import { requireAuth } from '../auth.js';
 import { emitEvent } from '../events.js';
 import { cleanText, isUuid, parseDate } from '../util.js';
+import { idempotent } from '../idempotency.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -53,7 +54,7 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-router.post('/', async (req, res, next) => {
+router.post('/', idempotent('appointments.create'), async (req, res, next) => {
   try {
     const b = req.body || {};
     const { patientId, departmentId, staffId, scheduledFor, durationMin = 30 } = b;

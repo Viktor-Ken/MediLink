@@ -28,6 +28,8 @@ import vitalRoutes from './routes/vitals.js';
 import accountRoutes from './routes/account.js';
 import chatRoutes from './routes/chat.js';
 import { evaluateLicense, warnLicense } from './license.js';
+import pool from './db.js';
+import { randomUUID } from 'node:crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -37,6 +39,32 @@ export function createApp() {
   app.disable('x-powered-by');
 
   if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY));
+
+  // One JSON line per request: enough to actually trace an incident (which
+  // request, how long, who, what status) without a new logging dependency.
+  // Deliberately never includes the request/response body — this app
+  // carries PHI, and a body could easily end up in there.
+  app.use((req, res, next) => {
+    req.id = req.headers['x-request-id'] || randomUUID();
+    res.setHeader('X-Request-Id', req.id);
+    const startedAt = process.hrtime.bigint();
+    res.on('finish', () => {
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      const line = {
+        ts: new Date().toISOString(),
+        level: res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info',
+        reqId: req.id,
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        durationMs: Math.round(durationMs),
+        staffId: req.staff?.id,
+        patientId: req.patientId,
+      };
+      (line.level === 'error' ? console.error : console.log)(JSON.stringify(line));
+    });
+    next();
+  });
 
   const corsOrigin = process.env.CORS_ORIGIN;
   app.use(cors(corsOrigin
@@ -84,7 +112,23 @@ export function createApp() {
     next();
   });
 
-  app.get('/api/health', (_req, res) => res.json({ ok: true }));
+  // A health check that only confirms the process is up misses the most
+  // common real failure (the DB is unreachable but the Node process is
+  // fine), so this actually pings Postgres rather than returning ok:true
+  // unconditionally. Kept fast (a trivial query against an already-warm
+  // pool) and bounded (won't hang a load balancer's health probe forever
+  // if the DB is stuck).
+  app.get('/api/health', async (_req, res) => {
+    const timeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('health check timed out')), 3000);
+    });
+    try {
+      await Promise.race([pool.query('SELECT 1'), timeout]);
+      res.json({ ok: true });
+    } catch {
+      res.status(503).json({ ok: false, error: 'Database unreachable' });
+    }
+  });
 
   const license = evaluateLicense();
   warnLicense(license);
@@ -131,7 +175,7 @@ export function createApp() {
 
   app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
-  app.use((err, _req, res, _next) => {
+  app.use((err, req, res, _next) => {
     // Body-parser failures (malformed JSON, oversized body) are client errors.
     const status = Number(err?.status || err?.statusCode);
     if (status >= 400 && status < 500) {
@@ -139,7 +183,7 @@ export function createApp() {
         error: status === 413 ? 'Request body too large' : 'Invalid request',
       });
     }
-    console.error(err);
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', reqId: req.id, err: err?.message, stack: err?.stack }));
     res.status(500).json({ error: 'Internal server error' });
   });
 

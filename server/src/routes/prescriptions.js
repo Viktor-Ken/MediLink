@@ -2,6 +2,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { requireAuth, requireRole } from '../auth.js';
 import { emitEvent } from '../events.js';
+import { idempotent } from '../idempotency.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -46,7 +47,7 @@ router.get('/', requireRole('admin', 'doctor', 'pharmacist', 'nurse'), async (re
   }
 });
 
-router.post('/', requireRole('doctor'), async (req, res, next) => {
+router.post('/', requireRole('doctor'), idempotent('prescriptions.create'), async (req, res, next) => {
   try {
     const { patientId, notes, items = [] } = req.body || {};
     if (!patientId) return res.status(400).json({ error: 'patientId is required' });
