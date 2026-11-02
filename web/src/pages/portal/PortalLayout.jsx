@@ -2,6 +2,16 @@ import { useEffect, useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { portalApi, clearPatientToken, getPatientToken } from '../../portalApi.js';
 import ThemeToggle from '../../components/ThemeToggle.jsx';
+import ChatWidget from '../../components/ChatWidget.jsx';
+
+const PORTAL_CHAT_WELCOME = {
+  role: 'assistant',
+  content:
+    "Hi! I can help you find your way around the portal — requesting an appointment, " +
+    "checking your records, consents or messages. I don't have access to your medical " +
+    "record and can't give medical advice. If this is an emergency, call emergency " +
+    "services or go to the nearest emergency department right away.",
+};
 
 const TABS = [
   { to: '/portal/record', label: 'My record', icon: '✚' },
@@ -75,6 +85,15 @@ export default function PortalLayout() {
       <main className="page-pad">
         <Outlet />
       </main>
+      <ChatWidget
+        apiFn={portalApi}
+        statusPath="/portal/chat/status"
+        chatPath="/portal/chat"
+        title="MediLink Portal Assistant"
+        welcome={PORTAL_CHAT_WELCOME}
+        placeholder="Ask about using the portal…"
+        note="For medical questions, message your care team. For emergencies, call emergency services."
+      />
     </div>
   );
 }

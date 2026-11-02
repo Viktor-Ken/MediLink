@@ -61,6 +61,13 @@ and secure messaging.
 - **Self-service security**: staff can change their own password (`/account`); patients can change their portal PIN (`/portal/account`)
 - Patient search now matches NIN and NHIS/HMO numbers as well as names/IDs
 
+**Optional AI assistant** — set `OPENAI_API_KEY` in `server/.env` to enable a floating chat
+widget on every staff page and, separately, on the patient portal (`/portal`). The two are
+scoped independently: the staff assistant helps with workflows and interpreting app data; the
+patient one only helps navigate the portal, is never given real record data, and always
+redirects clinical or urgent questions to the patient's care team or emergency services. See
+`server/.env.example` for the full set of `CHAT_*` / `PORTAL_CHAT_*` options.
+
 See `DESIGN.md` for the full design, data model, and roadmap (M0→M6).
 
 ## Setup

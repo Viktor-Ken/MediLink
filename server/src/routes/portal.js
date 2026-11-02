@@ -4,6 +4,8 @@ import pool, { PATIENT_COLUMNS } from '../db.js';
 import { requirePatient } from '../auth.js';
 import { emitEvent } from '../events.js';
 import { cleanText, isUuid, parseDate } from '../util.js';
+import { LRU } from '../lru.js';
+import { chatConfig, sanitizeMessages, completeChat } from '../chatEngine.js';
 
 const router = Router();
 router.use(requirePatient);
@@ -16,6 +18,82 @@ router.use(async (req, res, next) => {
     if (!rows[0]) return res.status(404).json({ error: 'Patient not found' });
     next();
   } catch (err) {
+    next(err);
+  }
+});
+
+// --- Patient-facing assistant (separate scope/prompt from the staff one in
+// routes/chat.js) ---------------------------------------------------------
+
+const PORTAL_CHAT_WINDOW_MS = 60_000;
+const PORTAL_CHAT_MAX_PER_WINDOW = Number(process.env.PORTAL_CHAT_RATE_LIMIT ?? 15);
+const portalChatRateLimitKeys = Math.max(1, Number(process.env.RATE_LIMIT_KEYS) || 10_000);
+const portalChatHits = new LRU({ max: portalChatRateLimitKeys, ttlMs: PORTAL_CHAT_WINDOW_MS });
+
+// Deliberately more restrictive than the staff prompt: this assistant is
+// never given any of the patient's real record data, so it must never imply
+// it has — and it must route anything clinical, and especially anything
+// urgent, to a real person rather than attempt to help with it itself.
+const PORTAL_CHAT_SYSTEM_PROMPT =
+  process.env.PORTAL_CHAT_SYSTEM_PROMPT ||
+  'You are the MediLink Patient Assistant, built into a hospital patient portal. You help ' +
+  'patients use the portal itself: how to request an appointment, where to find their care ' +
+  'timeline, prescriptions and test results, how to grant or withdraw consents, and how to ' +
+  'message their care team or raise a help desk request. ' +
+  'You are never given this patient\'s actual medical records, test results, or appointment ' +
+  'details — never claim to see, summarize, or interpret any specific personal health data; ' +
+  'if asked about it, point them to the relevant page in the portal instead. ' +
+  'Never give a medical diagnosis, never interpret symptoms or test results, never recommend ' +
+  'or adjust medication or dosing, and never tell a patient their condition is or isn\'t ' +
+  'serious. For any clinical question, direct them to message their care team through the ' +
+  'portal or to contact the hospital directly. If a message describes a medical emergency or ' +
+  'urgent/worsening symptoms, your first priority is telling them clearly to call emergency ' +
+  'services or go to the nearest emergency department immediately. Keep answers short, plain ' +
+  'and reassuring. If asked something unrelated to the hospital or this portal, politely ' +
+  'redirect.';
+
+function portalChatRateLimit(req, res, next) {
+  const key = req.patientId || req.ip || 'unknown';
+  const rec = portalChatHits.get(key);
+  if (!rec) {
+    portalChatHits.set(key, { count: 1 });
+    return next();
+  }
+  rec.count++;
+  if (rec.count > PORTAL_CHAT_MAX_PER_WINDOW) {
+    return res.status(429).json({ error: 'Too many messages, please slow down.' });
+  }
+  next();
+}
+
+router.get('/chat/status', (_req, res) => {
+  res.json({ configured: Boolean(chatConfig()), model: chatConfig()?.model || null });
+});
+
+router.post('/chat', portalChatRateLimit, async (req, res, next) => {
+  const cfg = chatConfig();
+  if (!cfg) {
+    return res.status(503).json({ error: 'The assistant is not configured on this server.' });
+  }
+
+  const messages = sanitizeMessages(req.body?.messages);
+  if (!messages) {
+    return res.status(400).json({ error: 'messages must be a non-empty array of {role, content}' });
+  }
+
+  try {
+    const reply = await completeChat({ cfg, systemPrompt: PORTAL_CHAT_SYSTEM_PROMPT, messages });
+    if (!reply) return res.status(502).json({ error: 'The assistant returned an empty response.' });
+    res.json({ reply });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return res.status(504).json({ error: 'The assistant took too long to respond.' });
+    }
+    if (err.upstreamStatus) {
+      console.error(`[medilink] portal chat upstream error ${err.upstreamStatus}`);
+      const code = err.upstreamStatus === 429 ? 429 : 502;
+      return res.status(code).json({ error: 'The assistant is temporarily unavailable.' });
+    }
     next(err);
   }
 });

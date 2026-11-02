@@ -1,15 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 
-const WELCOME = {
+const DEFAULT_WELCOME = {
   role: 'assistant',
   content: "Hi! I'm the MediLink assistant. Ask me about workflows, referrals, handoffs, reports or how to use the system. I won't ask for or repeat patient-identifying details.",
 };
 
-export default function ChatWidget() {
+/**
+ * Floating assistant widget. Defaults match the staff assistant (api.js,
+ * /chat/*); the patient portal mounts this with different props (portalApi.js,
+ * /portal/chat/*, its own title/welcome/placeholder) to keep the two
+ * assistants — and their very different system prompts server-side — visibly
+ * separate rather than sharing one "the assistant" identity in the UI.
+ */
+export default function ChatWidget({
+  apiFn = api,
+  statusPath = '/chat/status',
+  chatPath = '/chat',
+  title = 'MediLink Assistant',
+  welcome = DEFAULT_WELCOME,
+  placeholder = 'Ask about the system…',
+  note = 'Assistant responses may be inaccurate — verify clinical details.',
+}) {
   const [enabled, setEnabled] = useState(false);
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState([WELCOME]);
+  const [messages, setMessages] = useState([welcome]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -18,11 +33,11 @@ export default function ChatWidget() {
 
   useEffect(() => {
     let alive = true;
-    api('/chat/status')
+    apiFn(statusPath)
       .then((s) => { if (alive) setEnabled(Boolean(s?.configured)); })
       .catch(() => {});
     return () => { alive = false; };
-  }, []);
+  }, [apiFn, statusPath]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -44,7 +59,7 @@ export default function ChatWidget() {
     setError('');
     setBusy(true);
     try {
-      const { reply } = await api('/chat', {
+      const { reply } = await apiFn(chatPath, {
         method: 'POST',
         body: JSON.stringify({
           messages: next
@@ -72,9 +87,9 @@ export default function ChatWidget() {
       </button>
 
       {open && (
-        <section className="bot-panel" aria-label="MediLink assistant">
+        <section className="bot-panel" aria-label={title}>
           <header className="bot-head">
-            <span className="bot-title">MediLink Assistant</span>
+            <span className="bot-title">{title}</span>
             <button className="bot-close" aria-label="Close" onClick={() => setOpen(false)}>×</button>
           </header>
 
@@ -92,7 +107,7 @@ export default function ChatWidget() {
               className="bot-input"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about the system…"
+              placeholder={placeholder}
               maxLength={2000}
               aria-label="Message"
             />
@@ -100,7 +115,7 @@ export default function ChatWidget() {
               Send
             </button>
           </form>
-          <p className="bot-note">Assistant responses may be inaccurate — verify clinical details.</p>
+          <p className="bot-note">{note}</p>
         </section>
       )}
     </>
