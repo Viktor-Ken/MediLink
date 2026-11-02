@@ -1,5 +1,6 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
+import { readFileSync } from 'node:fs';
 
 dotenv.config();
 
@@ -7,12 +8,38 @@ const { Pool } = pg;
 
 const POOL_MAX = Number(process.env.PGPOOL_MAX ?? 25);
 
+// Managed Postgres providers (Supabase, RDS, etc.) require TLS and present a
+// cert that isn't always in Node's trust store, so a plain `ssl: true` fails
+// with SELF_SIGNED_CERT_IN_CHAIN. PGSSLMODE opts in without affecting a local,
+// SSL-less Postgres install (the default):
+//   PGSSLMODE=require      -> encrypt, don't verify the server cert (Supabase's
+//                              own quick-start recommendation for node-postgres)
+//   PGSSLMODE=verify-full  -> encrypt and verify (supply PGSSLROOTCERT with the
+//                              provider's CA certificate, e.g. Supabase's prod-ca-2021.crt)
+const sslMode = process.env.PGSSLMODE;
+const ssl =
+  sslMode === 'verify-full'
+    ? { rejectUnauthorized: true, ca: readFileSync(process.env.PGSSLROOTCERT, 'utf8') }
+    : sslMode === 'require'
+      ? { rejectUnauthorized: false }
+      : undefined;
+
+// A single connection string (e.g. Supabase's "Connection string" field, or
+// its pooler URI on port 6543) takes priority over the discrete PG* vars when
+// set, since that's how most managed providers hand out credentials.
+const connectionString = process.env.DATABASE_URL || undefined;
+
 const pool = new Pool({
-  host:                  process.env.PGHOST     || '127.0.0.1',
-  port:                  Number(process.env.PGPORT || 5432),
-  user:                  process.env.PGUSER     || 'postgres',
-  password:              process.env.PGPASSWORD || 'postgres',
-  database:              process.env.PGDATABASE || 'hospital',
+  ...(connectionString
+    ? { connectionString }
+    : {
+        host:     process.env.PGHOST     || '127.0.0.1',
+        port:     Number(process.env.PGPORT || 5432),
+        user:     process.env.PGUSER     || 'postgres',
+        password: process.env.PGPASSWORD || 'postgres',
+        database: process.env.PGDATABASE || 'hospital',
+      }),
+  ssl,
   max:                   POOL_MAX,
   connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS ?? 30_000),
   idleTimeoutMillis:     60_000,
