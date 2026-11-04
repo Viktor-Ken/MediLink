@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>MediLink Setup</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 32px;
+    font: 14px/1.5 -apple-system, 'Segoe UI', system-ui, sans-serif;
+    background: #f1f5f9; color: #0f172a;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: #64748b; }
+  fieldset { border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 16px; margin: 0 0 16px; }
+  legend { padding: 0 6px; font-weight: 600; font-size: 13px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: #334155; margin: 10px 0 4px; }
+  label:first-of-type { margin-top: 0; }
+  input[type="text"], input[type="password"] {
+    width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit;
+  }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; }
+  .radio-row { display: flex; gap: 18px; margin-bottom: 4px; }
+  .radio-row label { display: flex; align-items: center; gap: 6px; font-weight: 500; margin: 0; }
+  button {
+    font: inherit; border-radius: 8px; border: 1px solid transparent; padding: 8px 14px; cursor: pointer;
+  }
+  .btn-primary { background: #4338ca; color: #fff; width: 100%; padding: 10px; font-weight: 600; margin-top: 8px; }
+  .btn-ghost { background: #fff; border-color: #cbd5e1; color: #334155; }
+  .hint { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+  .error { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; padding: 8px 10px; border-radius: 8px; font-size: 12px; margin-bottom: 14px; }
+  .local-fields, .managed-fields { display: none; }
+  .local-fields.show, .managed-fields.show { display: block; }
+</style>
+</head>
+<body>
+  <h1>Set up MediLink</h1>
+  <p class="sub">This runs once per installation. Settings are saved on this computer only.</p>
+
+  <div id="error" class="error" style="display:none"></div>
+
+  <form id="form">
+    <fieldset>
+      <legend>Database</legend>
+      <div class="radio-row">
+        <label><input type="radio" name="dbType" value="managed" checked /> Supabase / managed Postgres</label>
+        <label><input type="radio" name="dbType" value="local" /> Local Postgres</label>
+      </div>
+
+      <div class="managed-fields show">
+        <label for="databaseUrl">Connection string</label>
+        <input type="text" id="databaseUrl" placeholder="postgres://postgres.xxxx:password@aws-0-region.pooler.supabase.com:6543/postgres" />
+        <label><input type="checkbox" id="pgSslMode" checked /> Require SSL (needed for Supabase)</label>
+      </div>
+
+      <div class="local-fields">
+        <div class="row">
+          <div><label for="pgHost">Host</label><input type="text" id="pgHost" value="127.0.0.1" /></div>
+          <div><label for="pgPort">Port</label><input type="text" id="pgPort" value="5432" /></div>
+        </div>
+        <div class="row">
+          <div><label for="pgUser">User</label><input type="text" id="pgUser" value="postgres" /></div>
+          <div><label for="pgPassword">Password</label><input type="password" id="pgPassword" value="postgres" /></div>
+        </div>
+        <label for="pgDatabase">Database</label>
+        <input type="text" id="pgDatabase" value="hospital" />
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Security</legend>
+      <label for="jwtSecret">Session signing key</label>
+      <div class="row">
+        <input type="text" id="jwtSecret" />
+        <button type="button" class="btn-ghost" id="genSecret">Generate</button>
+      </div>
+      <p class="hint">A long random value used to sign login sessions. Generated for you — just leave it as-is.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>AI assistant (optional)</legend>
+      <label for="openaiKey">OpenAI API key</label>
+      <input type="password" id="openaiKey" placeholder="sk-… (leave blank to disable)" />
+    </fieldset>
+
+    <button type="submit" class="btn-primary" id="submitBtn">Save and start MediLink</button>
+  </form>
+
+  <script>
+    const form = document.getElementById('form');
+    const errorBox = document.getElementById('error');
+    const submitBtn = document.getElementById('submitBtn');
+
+    document.querySelectorAll('input[name="dbType"]').forEach((r) => {
+      r.addEventListener('change', () => {
+        const managed = document.querySelector('input[name="dbType"]:checked').value === 'managed';
+        document.querySelector('.managed-fields').classList.toggle('show', managed);
+        document.querySelector('.local-fields').classList.toggle('show', !managed);
+      });
+    });
+
+    document.getElementById('genSecret').addEventListener('click', async () => {
+      document.getElementById('jwtSecret').value = await window.setupApi.generateSecret();
+    });
+
+    window.setupApi.onPrefill((data) => {
+      if (data.DATABASE_URL) document.getElementById('databaseUrl').value = data.DATABASE_URL;
+      if (data.JWT_SECRET) document.getElementById('jwtSecret').value = data.JWT_SECRET;
+      if (data.OPENAI_API_KEY) document.getElementById('openaiKey').value = data.OPENAI_API_KEY;
+      if (data.PGHOST) {
+        document.querySelector('input[name="dbType"][value="local"]').checked = true;
+        document.querySelector('.managed-fields').classList.remove('show');
+        document.querySelector('.local-fields').classList.add('show');
+        document.getElementById('pgHost').value = data.PGHOST || '';
+        document.getElementById('pgPort').value = data.PGPORT || '5432';
+        document.getElementById('pgUser').value = data.PGUSER || '';
+        document.getElementById('pgPassword').value = data.PGPASSWORD || '';
+        document.getElementById('pgDatabase').value = data.PGDATABASE || '';
+      }
+      if (data._error) {
+        errorBox.style.display = 'block';
+        errorBox.textContent = 'Could not start with the saved settings: ' + data._error;
+      }
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorBox.style.display = 'none';
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Starting…';
+
+      const managed = document.querySelector('input[name="dbType"]:checked').value === 'managed';
+      const jwtSecret = document.getElementById('jwtSecret').value.trim();
+      if (!jwtSecret) {
+        errorBox.style.display = 'block';
+        errorBox.textContent = 'Click "Generate" for a session signing key.';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Save and start MediLink';
+        return;
+      }
+
+      const fields = { JWT_SECRET: jwtSecret };
+      const openaiKey = document.getElementById('openaiKey').value.trim();
+      if (openaiKey) fields.OPENAI_API_KEY = openaiKey;
+
+      if (managed) {
+        fields.DATABASE_URL = document.getElementById('databaseUrl').value.trim();
+        if (document.getElementById('pgSslMode').checked) fields.PGSSLMODE = 'require';
+      } else {
+        fields.PGHOST = document.getElementById('pgHost').value.trim();
+        fields.PGPORT = document.getElementById('pgPort').value.trim();
+        fields.PGUSER = document.getElementById('pgUser').value.trim();
+        fields.PGPASSWORD = document.getElementById('pgPassword').value;
+        fields.PGDATABASE = document.getElementById('pgDatabase').value.trim();
+      }
+
+      const result = await window.setupApi.saveConfig(fields);
+      if (!result.ok) {
+        errorBox.style.display = 'block';
+        errorBox.textContent = result.error || 'Could not start MediLink with these settings.';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Save and start MediLink';
+      }
+      // On success the main process closes this window and opens the app.
+    });
+  </script>
+</body>
+</html>

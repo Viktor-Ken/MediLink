@@ -3,6 +3,7 @@ import { Link, Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { portalApi, clearPatientToken, getPatientToken } from '../../portalApi.js';
 import ThemeToggle from '../../components/ThemeToggle.jsx';
 import ChatWidget from '../../components/ChatWidget.jsx';
+import InstallAppButton from '../../components/InstallAppButton.jsx';
 
 const PORTAL_CHAT_WELCOME = {
   role: 'assistant',
@@ -57,6 +58,7 @@ export default function PortalLayout() {
           </div>
           <div className="row" style={{ marginLeft: 'auto', gap: 10 }}>
             <ThemeToggle />
+            <InstallAppButton />
             <Link to="/login" className="btn btn-ghost btn-sm">Staff sign in</Link>
             <button
               className="btn btn-ghost btn-sm"

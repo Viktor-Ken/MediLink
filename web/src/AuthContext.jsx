@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { api, getToken, setToken, clearToken } from './api.js';
+import { API_BASE } from './apiBase.js';
 
 const AuthContext = createContext(null);
 
@@ -36,7 +37,7 @@ export function AuthProvider({ children }) {
   // because api() would attach the (possibly stale) MediLink token instead of
   // the Clerk token this endpoint needs.
   async function loginWithClerk(clerkToken, email) {
-    const res = await fetch('/api/auth/clerk', {
+    const res = await fetch(`${API_BASE}/api/auth/clerk`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${clerkToken}` },
       body: JSON.stringify({ email: email || undefined }),

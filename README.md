@@ -118,8 +118,27 @@ accept/complete it and watch the task + timeline update.
 ```
 server/   API (Express) — src/routes/*, schema.sql, migrate.js, smoke tests
 web/      React SPA (Vite) — src/pages/*, src/components/*
+desktop/  Electron wrapper — native Windows/Mac/Linux installer (see desktop/README.md)
+mobile/   Capacitor wrapper — native Android/iOS app (see mobile/README.md)
 DESIGN.md Living design doc (vision, data model, roadmap, decisions)
 ```
+
+## Cross-platform app
+
+Beyond the browser (which already installs as a PWA on any device — look for
+"Install app" in the app itself, or the browser's own install prompt), MediLink
+also ships as:
+
+- **Desktop** (`desktop/`) — a real Windows/Mac/Linux installer. Runs the exact
+  same server in-process and opens a native window to it; a first-run setup
+  screen collects the database connection, so one installer works for any
+  hospital's own database. See `desktop/README.md`.
+- **Mobile** (`mobile/`) — a real Android/iOS app via Capacitor, wrapping the
+  same React client. Talks to your already-deployed API over the network
+  (a phone can't run the database). See `mobile/README.md`.
+
+Both reuse the same `server/` and `web/` code — there's one app to maintain,
+packaged three different ways.
 
 ## Security testing
 

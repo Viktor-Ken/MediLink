@@ -1,0 +1,60 @@
+{
+  "name": "medilink-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MediLink desktop app (Windows/Mac/Linux) — wraps the same server and web client in a native window",
+  "main": "main.js",
+  "scripts": {
+    "prepare-resources": "node scripts/prepare.mjs",
+    "start": "npm run prepare-resources && electron .",
+    "dist:win": "npm run prepare-resources && electron-builder --win",
+    "dist:mac": "npm run prepare-resources && electron-builder --mac",
+    "dist:linux": "npm run prepare-resources && electron-builder --linux",
+    "dist": "npm run prepare-resources && electron-builder --win --mac --linux"
+  },
+  "dependencies": {
+    "@node-rs/bcrypt": "^1.10.9",
+    "compression": "^1.8.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.medilink.desktop",
+    "productName": "MediLink",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "setup-preload.js",
+      "setup.html",
+      "resources/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/@node-rs/bcrypt*/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "../web/public/icons/icon-512.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "../web/public/icons/icon-512.png",
+      "category": "public.app-category.medical"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "../web/public/icons/icon-512.png",
+      "category": "Office"
+    }
+  }
+}

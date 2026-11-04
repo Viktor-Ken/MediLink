@@ -1,0 +1,8 @@
+{
+  "appId": "com.medilink.app",
+  "appName": "MediLink",
+  "webDir": "../web/dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
