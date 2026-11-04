@@ -1,0 +1,24 @@
+{
+  "name": "medilink-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MediLink mobile app (Android/iOS) — Capacitor wrapper around the web client, talking to a deployed API over the network",
+  "scripts": {
+    "build-web": "node scripts/build-web.mjs",
+    "sync": "npx cap sync",
+    "add:android": "npx cap add android",
+    "add:ios": "npx cap add ios",
+    "open:android": "npx cap open android",
+    "open:ios": "npx cap open ios",
+    "release": "npm run build-web && npm run sync"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/ios": "^6.2.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0"
+  }
+}

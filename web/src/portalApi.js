@@ -1,3 +1,5 @@
+import { API_BASE } from './apiBase.js';
+
 const TOKEN_KEY = 'medilink_patient_token';
 
 async function handleLicenseLock() {
@@ -24,7 +26,7 @@ export async function portalApi(path, options = {}) {
   const token = getPatientToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`/api${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}/api${path}`, { ...options, headers });
 
   if (res.status === 401 && !options.noSessionRedirect) {
     clearPatientToken();

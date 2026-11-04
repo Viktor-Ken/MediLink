@@ -4,6 +4,7 @@ import { useAuth } from '../AuthContext.jsx';
 import { api } from '../api.js';
 import ThemeToggle from './ThemeToggle.jsx';
 import ChatWidget from './ChatWidget.jsx';
+import InstallAppButton from './InstallAppButton.jsx';
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -117,6 +118,7 @@ export default function Layout() {
             </div>
             <ThemeToggle style={{ marginLeft: 'auto' }} />
           </div>
+          <InstallAppButton className="btn-block" />
           <button
             className="btn btn-ghost btn-block"
             onClick={() => {

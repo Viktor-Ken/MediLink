@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, getToken } from '../api.js';
+import { API_BASE } from '../apiBase.js';
 
 const EXPORTS = [
   ['patients', 'Patients registry'],
@@ -44,7 +45,7 @@ export default function Reports() {
     setDownloading(type);
     setError('');
     try {
-      const res = await fetch(`/api/reports/export/${type}`, {
+      const res = await fetch(`${API_BASE}/api/reports/export/${type}`, {
         headers: { Authorization: `Bearer ${getToken()}` },
       });
       if (!res.ok) {

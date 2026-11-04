@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { setPatientToken } from '../../portalApi.js';
+import { API_BASE } from '../../apiBase.js';
 import PasswordInput from '../../components/PasswordInput.jsx';
 import ThemeToggle from '../../components/ThemeToggle.jsx';
 
@@ -18,7 +19,7 @@ export default function PortalLogin() {
     setError('');
     setNote('');
     try {
-      const res = await fetch('/api/auth/patient-login', {
+      const res = await fetch(`${API_BASE}/api/auth/patient-login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ patientNo, pin }),
