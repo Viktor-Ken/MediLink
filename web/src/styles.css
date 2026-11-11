@@ -3,7 +3,11 @@
   --panel: #ffffff;
   --border: #dde4ee;
   --text: #1c2b3a;
-  --muted: #64748b;
+  /* #64748b measured 4.39:1 on --bg, just under WCAG AA's 4.5:1 for normal
+     text (this is used as text color in 30+ places). One step darker on the
+     same slate scale clears it everywhere (7.0:1 on --bg, 7.6:1 on --panel)
+     without changing the app's color identity. */
+  --muted: #475569;
   --primary: #0e7490;
   --primary-dark: #155e75;
   --danger: #b91c1c;
@@ -414,6 +418,20 @@ select:focus,
 textarea:focus {
   outline: 2px solid var(--primary);
   outline-offset: -1px;
+}
+
+/* Buttons, links and nav items had no designed focus state — only whatever
+   unstyled default the browser happens to draw (not removed anywhere, just
+   never set, so it was inconsistent across browsers and themes). Scoped to
+   :focus-visible so it shows for keyboard navigation, not an incidental
+   mouse click. */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .alert-error {
