@@ -455,6 +455,12 @@ router.post('/pin', async (req, res, next) => {
     }
     const hash = await hashPassword(newPin, 10);
     await pool.query('UPDATE patients SET pin_hash = $1 WHERE id = $2', [hash, req.patientId]);
+    // Revoke other devices after a credential change; keep this active flow usable.
+    await pool.query(
+      `UPDATE auth_sessions SET revoked_at = now()
+       WHERE patient_id = $1 AND id <> $2 AND revoked_at IS NULL`,
+      [req.patientId, req.authSessionId],
+    );
     emitEvent({
       patientId: req.patientId,
       kind: 'portal_pin_changed',
