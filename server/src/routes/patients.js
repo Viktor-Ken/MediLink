@@ -18,16 +18,14 @@ router.use((_req, res, next) => {
   next();
 });
 
-// Roles with no clinical or registration need for national ID, insurance,
-// or medical-history fields (audit finding: patients.js read endpoints had
-// no role restriction at all, unlike equivalent clinical-data routes
-// elsewhere in the app). Everyone can still look up and open a patient —
-// restricting that would break the shared PatientProfile page these roles
-// legitimately use from Pharmacy/Scan/Coordination/Wards — but these
-// specific fields are stripped from the response for roles that don't need
-// them, rather than gating the whole endpoint.
+// Reception and optometry can use shared registration/profile workflows, but
+// they do not need national identifiers, medical history, or free-text notes
+// for every patient. Keep their API response to operational demographics and
+// contacts; clinical roles retain the additional fields needed for treatment.
 const PHI_RESTRICTED_ROLES = new Set(['receptionist', 'optometrist']);
-const PHI_RESTRICTED_FIELDS = ['nin', 'nhis_no', 'allergies', 'conditions', 'medications'];
+const PHI_RESTRICTED_FIELDS = [
+  'nin', 'nhis_no', 'blood_type', 'genotype', 'allergies', 'conditions', 'medications', 'notes',
+];
 
 function redactPhiForRole(patient, role) {
   if (!patient || !PHI_RESTRICTED_ROLES.has(role)) return patient;
@@ -65,6 +63,18 @@ router.get('/', async (req, res, next) => {
       [like],
     );
     res.json({ patients: rows.map((p) => redactPhiForRole(p, req.staff.role)) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/count', async (_req, res, next) => {
+  try {
+    // The dashboard needs a single aggregate, not a page of patient records.
+    // This avoids transferring personal data solely to display a count and
+    // keeps the displayed total correct beyond the list endpoint's 100-row cap.
+    const { rows } = await pool.query('SELECT count(*)::int AS total FROM patients');
+    res.json({ total: rows[0].total });
   } catch (err) {
     next(err);
   }
