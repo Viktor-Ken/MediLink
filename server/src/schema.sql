@@ -41,6 +41,24 @@ CREATE TABLE IF NOT EXISTS patients (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- A token is accepted only while its session row exists, is unrevoked, and
+-- has not expired. Keeping one subject per row supports immediate logout for
+-- both staff and portal accounts across every clustered API worker.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id UUID PRIMARY KEY,
+  staff_id UUID REFERENCES staff(id) ON DELETE CASCADE,
+  patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((staff_id IS NOT NULL)::int + (patient_id IS NOT NULL)::int = 1)
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_staff_active
+  ON auth_sessions(staff_id, expires_at) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_patient_active
+  ON auth_sessions(patient_id, expires_at) WHERE revoked_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS scan_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
