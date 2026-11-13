@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
-import { createSecretKey, randomBytes } from 'node:crypto';
+import { createSecretKey, randomBytes, randomUUID } from 'node:crypto';
 import pool from './db.js';
 
 dotenv.config();
@@ -26,8 +26,27 @@ if (!process.env.JWT_SECRET) {
 // request — measured at ~13% of server CPU under load. Same HMAC key material.
 const JWT_SECRET_KEY = createSecretKey(Buffer.from(JWT_SECRET, 'utf8'));
 const JWT_ALGS = ['HS256'];
+// Access tokens are short enough to limit exposure when copied, while the
+// database session record lets logout revoke a token immediately rather than
+// waiting for this expiry. There is intentionally no silent refresh here.
+const TOKEN_TTL = '8h';
 
-export function signToken(staff) {
+/** Create a server-side session before returning a token to a client. */
+export async function createSession({ staffId = null, patientId = null }) {
+  if (Boolean(staffId) === Boolean(patientId)) {
+    throw new Error('A session must belong to exactly one staff member or patient');
+  }
+  const id = randomUUID();
+  const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  await pool.query(
+    `INSERT INTO auth_sessions (id, staff_id, patient_id, expires_at)
+     VALUES ($1, $2, $3, $4)`,
+    [id, staffId, patientId, expiresAt],
+  );
+  return id;
+}
+
+export function signToken(staff, sessionId) {
   return jwt.sign(
     {
       id: staff.id,
@@ -41,15 +60,15 @@ export function signToken(staff) {
       tv: staff.token_version ?? 0,
     },
     JWT_SECRET,
-    { expiresIn: '12h', algorithm: 'HS256' },
+    { jwtid: sessionId, expiresIn: TOKEN_TTL, algorithm: 'HS256' },
   );
 }
 
-export function signPatientToken(patient) {
+export function signPatientToken(patient, sessionId) {
   return jwt.sign(
     { pid: patient.id, patient_no: patient.patient_no, role: 'patient' },
     JWT_SECRET,
-    { expiresIn: '12h', algorithm: 'HS256' },
+    { jwtid: sessionId, expiresIn: TOKEN_TTL, algorithm: 'HS256' },
   );
 }
 
@@ -97,6 +116,20 @@ export async function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Staff access only' });
   }
   try {
+    // This read is deliberately uncached: a token copied before logout must
+    // stop working on the next request, including requests handled by another
+    // clustered worker. The signed jti is only valid while its DB row is active.
+    if (!payload.jti) {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    const { rows: sessions } = await pool.query(
+      `SELECT id FROM auth_sessions
+       WHERE id = $1 AND staff_id = $2 AND revoked_at IS NULL AND expires_at > now()`,
+      [payload.jti, payload.id],
+    );
+    if (!sessions[0]) {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
     const account = await loadAccount(payload.id);
     if (!account || account.active === false) {
       return res.status(401).json({ error: 'Account is no longer active' });
@@ -116,7 +149,7 @@ export async function requireAuth(req, res, next) {
   }
 }
 
-export function requirePatient(req, res, next) {
+export async function requirePatient(req, res, next) {
   const token = bearer(req);
   if (!token) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -126,10 +159,24 @@ export function requirePatient(req, res, next) {
     if (!payload.pid || payload.role !== 'patient') {
       return res.status(401).json({ error: 'Patient access only' });
     }
+    if (!payload.jti) {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    // Patient sessions use the same server-side revocation check as staff
+    // sessions, but remain bound to the patient ID carried by this token.
+    const { rows } = await pool.query(
+      `SELECT id FROM auth_sessions
+       WHERE id = $1 AND patient_id = $2 AND revoked_at IS NULL AND expires_at > now()`,
+      [payload.jti, payload.pid],
+    );
+    if (!rows[0]) {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
     req.patientId = payload.pid;
+    req.authSessionId = payload.jti;
     next();
-  } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+  } catch (err) {
+    next(err);
   }
 }
 

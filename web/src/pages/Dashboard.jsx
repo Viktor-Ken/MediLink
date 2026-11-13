@@ -22,9 +22,9 @@ export default function Dashboard() {
     api('/referrals')
       .then((d) => setReferrals(d.referrals.filter((r) => r.status === 'open' || r.status === 'accepted')))
       .catch(() => {});
-    Promise.all([api('/patients'), api('/departments')])
+    Promise.all([api('/patients/count'), api('/departments')])
       .then(([p, d]) => {
-        setStats({ patients: p.patients.length, departments: d.departments.length });
+        setStats({ patients: p.total, departments: d.departments.length });
         if (user?.department_id) {
           setMyDept(d.departments.find((dep) => dep.id === user.department_id) || null);
         }

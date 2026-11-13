@@ -21,6 +21,21 @@ export function clearPatientToken() {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+// Keep the token only long enough to revoke its matching database session.
+export async function revokePatientSession() {
+  const token = getPatientToken();
+  clearPatientToken();
+  if (!token) return;
+  try {
+    await fetch(`${API_BASE}/api/auth/patient-logout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    // Local sign-out still completes if the network is unavailable.
+  }
+}
+
 export async function portalApi(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   const token = getPatientToken();
@@ -30,8 +45,9 @@ export async function portalApi(path, options = {}) {
 
   if (res.status === 401 && !options.noSessionRedirect) {
     clearPatientToken();
-    if (!window.location.pathname.startsWith('/portal')) window.location.replace('/portal');
-    return new Promise(() => {});
+    if (window.location.pathname !== '/portal/login') window.location.replace('/portal/login');
+    // Settle protected-page requests so stale content cannot remain after expiry.
+    throw new Error('Patient session expired; please sign in again.');
   }
 
   const data = await res.json().catch(() => ({}));

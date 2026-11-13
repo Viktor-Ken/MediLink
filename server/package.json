@@ -6,6 +6,7 @@
   "description": "MediLink hospital management system - API",
   "scripts": {
     "db:migrate": "node scripts/migrate.js",
+    "test:session-security": "node tests/session-security.mjs",
     "dev": "node --watch src/index.js",
     "start": "node src/index.js"
   },
