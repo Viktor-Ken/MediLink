@@ -31,7 +31,8 @@ export async function api(path, options = {}) {
   if (res.status === 401 && !options.noSessionRedirect) {
     clearToken();
     if (window.location.pathname !== '/login') window.location.replace('/login');
-    return new Promise(() => {});
+    // Reject the request so AuthProvider can finish loading and render the login route.
+    throw new Error('Session expired; please sign in again.');
   }
 
   const data = await res.json().catch(() => ({}));
