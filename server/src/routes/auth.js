@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { compare, hash as hashPassword } from '@node-rs/bcrypt';
 import pool from '../db.js';
 import {
-  createLockout, requireAuth, requirePatient, signPatientToken, signToken,
+  createLockout, createSession, requireAuth, requirePatient, signPatientToken, signToken,
 } from '../auth.js';
 import { clerkConfigured, fetchVerifiedEmails, verifyClerkSession } from '../clerk.js';
 import { LRU } from '../lru.js';
@@ -68,7 +68,8 @@ router.post('/login', authRateLimit, async (req, res, next) => {
     await staffLockout.clear(lockKey);
 
     const { password_hash, token_version, ...safe } = staff;
-    res.json({ token: signToken(staff), staff: safe });
+    const sessionId = await createSession({ staffId: staff.id });
+    res.json({ token: signToken(staff, sessionId), staff: safe });
   } catch (err) {
     next(err);
   }
@@ -135,7 +136,36 @@ router.post('/clerk', authRateLimit, async (req, res, next) => {
     }
 
     const { password_hash, clerk_user_id, token_version, ...safe } = staff;
-    res.json({ token: signToken(staff), staff: safe });
+    const sessionId = await createSession({ staffId: staff.id });
+    res.json({ token: signToken(staff, sessionId), staff: safe });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Revoke the exact bearer session so a copied token stops authorizing the next
+// request, even if it is replayed from another browser or API worker.
+router.post('/logout', requireAuth, async (req, res, next) => {
+  try {
+    await pool.query(
+      `UPDATE auth_sessions SET revoked_at = now()
+       WHERE id = $1 AND staff_id = $2 AND revoked_at IS NULL`,
+      [req.staff.jti, req.staff.id],
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/patient-logout', requirePatient, async (req, res, next) => {
+  try {
+    await pool.query(
+      `UPDATE auth_sessions SET revoked_at = now()
+       WHERE id = $1 AND patient_id = $2 AND revoked_at IS NULL`,
+      [req.authSessionId, req.patientId],
+    );
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -197,7 +227,8 @@ router.post('/patient-login', authRateLimit, async (req, res, next) => {
       [patient.id, JSON.stringify({ patient_no: patient.patient_no })],
     );
     const { pin_hash, ...safe } = patient;
-    res.json({ token: signPatientToken(patient), patient: safe });
+    const sessionId = await createSession({ patientId: patient.id });
+    res.json({ token: signPatientToken(patient, sessionId), patient: safe });
   } catch (err) {
     next(err);
   }
