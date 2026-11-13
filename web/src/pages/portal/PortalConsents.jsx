@@ -71,7 +71,7 @@ export default function PortalConsents() {
               </div>
               <button
                 className="btn"
-                style={granted ? { background: '#fff', color: 'var(--danger)', border: '1px solid var(--danger-border)' } : undefined}
+                style={granted ? { background: 'var(--panel)', color: 'var(--danger)', border: '1px solid var(--danger-border)' } : undefined}
                 onClick={() => toggle(kind, c?.status || 'revoked')}
                 disabled={busy === kind}
               >

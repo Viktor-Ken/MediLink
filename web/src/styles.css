@@ -1,22 +1,29 @@
 :root {
-  --bg: #f3f6fb;
+  /* Visual identity: a deepened, custom teal (not the lighter #0e7490 this
+     app started with) paired with a cool sage-grey paper background rather
+     than a stock white/blue-grey dashboard surface — chosen to sit apart
+     from the existing danger (red), success (green) and fall-risk-amber
+     clinical conventions used throughout the app, instead of on top of
+     them. --sidebar-bg/--brand-accent are fixed (not theme-swapped) because
+     the sidebar and brand mark keep one identity across light/dark. */
+  --bg: #eef1ed;
   --panel: #ffffff;
-  --border: #dde4ee;
-  --text: #1c2b3a;
-  /* #64748b measured 4.39:1 on --bg, just under WCAG AA's 4.5:1 for normal
-     text (this is used as text color in 30+ places). One step darker on the
-     same slate scale clears it everywhere (7.0:1 on --bg, 7.6:1 on --panel)
-     without changing the app's color identity. */
-  --muted: #475569;
-  --primary: #0e7490;
-  --primary-dark: #155e75;
+  --border: #d7ded8;
+  --text: #16211c;
+  --muted: #4b5a52;
+  --primary: #0b5a67;
+  --primary-dark: #073e47;
   --danger: #b91c1c;
   --success: #16a34a;
   --danger-bg: #fef2f2;
   --danger-border: #fecaca;
   --good: #15803d;
+  --sidebar-bg: #0c2420;
+  --brand-accent: #0f766e;
   --sidebar-w: 240px;
-  --radius: 12px;
+  --radius: 10px;
+  --font-sans: 'Public Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
 
 * {
@@ -25,7 +32,7 @@
 
 body {
   margin: 0;
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
   background: var(--bg);
   color: var(--text);
   font-size: 15px;
@@ -43,7 +50,7 @@ body {
 .sidebar {
   width: var(--sidebar-w);
   flex-shrink: 0;
-  background: #0f2330;
+  background: var(--sidebar-bg);
   color: #e2e8f0;
   display: flex;
   flex-direction: column;
@@ -62,7 +69,7 @@ body {
 }
 
 .brand-mark {
-  background: #0ea5b7;
+  background: var(--brand-accent);
   color: #fff;
   font-size: 20px;
   width: 38px;
@@ -110,7 +117,7 @@ body {
 }
 
 .nav-link.active {
-  background: #0ea5b7;
+  background: var(--brand-accent);
   color: #fff;
 }
 
@@ -139,7 +146,7 @@ body {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: #0ea5b7;
+  background: var(--brand-accent);
   color: #fff;
   display: flex;
   align-items: center;
@@ -174,7 +181,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 40;
-  background: #0f2330;
+  background: var(--sidebar-bg);
   color: #fff;
   align-items: center;
   gap: 12px;
@@ -486,7 +493,7 @@ a:focus-visible,
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0f2330, #0e7490 60%, #0ea5b7);
+  background: linear-gradient(135deg, var(--sidebar-bg), var(--primary) 60%, var(--brand-accent));
 }
 
 .login-card {
@@ -596,7 +603,7 @@ a:focus-visible,
 }
 
 .patient-row .pno {
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
   color: var(--primary-dark);
   font-weight: 700;
   font-size: 14px;
@@ -1501,6 +1508,7 @@ a:focus-visible,
 }
 
 .ews-num {
+  font-family: var(--font-mono);
   font-size: 42px;
   font-weight: 800;
   line-height: 1;
@@ -1536,6 +1544,7 @@ a:focus-visible,
 }
 
 .vit-pair .v {
+  font-family: var(--font-mono);
   font-weight: 700;
   font-size: 16px;
 }
@@ -1629,26 +1638,38 @@ a:focus-visible,
 /* ==== Dark theme ==== */
 
 [data-theme="dark"] {
-  --bg: #0f172a;
-  --panel: #1e293b;
-  --border: #334155;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --primary: #22d3ee;
-  --primary-dark: #06b6d4;
+  /* Paired to the light-mode teal above rather than left on the app's old,
+     unrelated navy/cyan dark palette — same hue family, inverted for a dark
+     surface. --primary-dark is intentionally brighter than --primary here
+     (a dark-mode hover highlights rather than darkens), and .btn's text
+     switches to a near-black below so white-on-bright-accent buttons stay
+     readable (the old #22d3ee/#06b6d4 pair read at ~1.8:1 and ~2.4:1 with
+     white text — well under AA even for large text). */
+  --bg: #0d1613;
+  --panel: #172420;
+  --border: #2b3733;
+  --text: #e7eeea;
+  --muted: #9db2a9;
+  --primary: #2dd4bf;
+  --primary-dark: #5eead4;
   --danger: #f87171;
   --success: #4ade80;
   --danger-bg: #2c1a1a;
   --danger-border: #7f1d1d;
   --good: #4ade80;
-  --primary-soft: #164e63;
+  --primary-soft: #134e49;
   --info-bg: #172554;
   --info-border: #1e3a8a;
   --info-text: #bfdbfe;
 }
 
+[data-theme="dark"] .btn:not(.btn-ghost):not(.btn-danger),
+[data-theme="dark"] .bot-fab {
+  color: #06211d;
+}
+
 [data-theme="dark"] .login-page {
-  background: linear-gradient(135deg, #0b1520, #134e54 60%, #0e7490);
+  background: linear-gradient(135deg, #0a1512, #0f4a44 60%, #2dd4bf);
 }
 
 [data-theme="dark"] .login-card {
@@ -1656,13 +1677,13 @@ a:focus-visible,
 }
 
 [data-theme="dark"] .login-hint {
-  background: #1e293b;
+  background: #182622;
 }
 
 [data-theme="dark"] input,
 [data-theme="dark"] select,
 [data-theme="dark"] textarea {
-  background: #293548;
+  background: #1c2b27;
 }
 
 [data-theme="dark"] .picker .picker-value,
@@ -1678,15 +1699,15 @@ a:focus-visible,
 
 [data-theme="dark"] .picker-list li:hover,
 [data-theme="dark"] .mconv:hover {
-  background: #293548;
+  background: #1c2b27;
 }
 
 [data-theme="dark"] .mconv.active {
-  background: #164e63;
+  background: #134e49;
 }
 
 [data-theme="dark"] .tag {
-  background: #334155;
+  background: #2b3733;
 }
 
 [data-theme="dark"] .tag-danger {
@@ -1705,15 +1726,15 @@ a:focus-visible,
 }
 
 [data-theme="dark"] .mbubble {
-  background: #293548;
+  background: #1c2b27;
 }
 
 [data-theme="dark"] .tl-icon {
-  background: #293548;
+  background: #1c2b27;
 }
 
 [data-theme="dark"] .consent-chip {
-  background: #1e293b;
+  background: #182622;
 }
 
 [data-theme="dark"] .bed-occupied {
@@ -1722,8 +1743,8 @@ a:focus-visible,
 }
 
 [data-theme="dark"] .bed-maintenance {
-  background: #293548;
-  border-color: #475569;
+  background: #1c2b27;
+  border-color: #2b3733;
 }
 
 [data-theme="dark"] .alert-info {
@@ -1795,7 +1816,7 @@ a:focus-visible,
   line-height: 1;
   color: #fff;
   background: var(--primary);
-  box-shadow: 0 8px 24px rgba(14, 116, 144, 0.35);
+  box-shadow: 0 8px 24px rgba(11, 90, 103, 0.35);
 }
 .bot-fab:hover {
   background: var(--primary-dark);

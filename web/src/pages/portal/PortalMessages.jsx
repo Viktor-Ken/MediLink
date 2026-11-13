@@ -122,7 +122,7 @@ export default function PortalMessages() {
       )}
 
       <div className="messages-shell">
-        <aside className="mlist" style={{ background: '#fff' }}>
+        <aside className="mlist" style={{ background: 'var(--panel)' }}>
           {conversations.length === 0 && (
             <p className="muted" style={{ padding: 16 }}>No conversations yet. Your doctor can start a private chat with you.</p>
           )}
