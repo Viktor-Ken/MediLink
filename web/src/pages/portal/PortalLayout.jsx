@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { portalApi, clearPatientToken, getPatientToken } from '../../portalApi.js';
+import { portalApi, revokePatientSession, getPatientToken } from '../../portalApi.js';
 import ThemeToggle from '../../components/ThemeToggle.jsx';
 import ChatWidget from '../../components/ChatWidget.jsx';
 import InstallAppButton from '../../components/InstallAppButton.jsx';
@@ -64,7 +64,7 @@ export default function PortalLayout() {
               className="btn btn-ghost btn-sm"
               style={{ color: 'var(--danger)' }}
               onClick={() => {
-                clearPatientToken();
+                revokePatientSession();
                 nav('/portal/login');
               }}
             >
