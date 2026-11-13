@@ -30,6 +30,13 @@ router.post('/password', async (req, res, next) => {
       'UPDATE staff SET password_hash = $1, token_version = token_version + 1 WHERE id = $2',
       [hash, req.staff.id],
     );
+    // Password changes invalidate old devices as well as the old JWT version;
+    // the current session will also require a fresh login on its next request.
+    await pool.query(
+      `UPDATE auth_sessions SET revoked_at = now()
+       WHERE staff_id = $1 AND revoked_at IS NULL`,
+      [req.staff.id],
+    );
     // A stolen token must not keep working after the owner rotates their
     // password specifically to cut it off. Bumping token_version makes every
     // previously-issued JWT fail requireAuth's version check immediately,
