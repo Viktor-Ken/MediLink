@@ -50,8 +50,16 @@ export function AuthProvider({ children }) {
   }
 
   function logout() {
+    const token = getToken();
+    // Clear protected UI state immediately, then revoke this exact server session.
     clearToken();
     setUser(null);
+    if (token) {
+      return fetch(`${API_BASE}/api/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
   }
 
   return (
