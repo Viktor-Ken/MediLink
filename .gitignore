@@ -5,3 +5,4 @@ dist/
 .vite/
 .license_state
 license-priv.pem
+server/license.txt
